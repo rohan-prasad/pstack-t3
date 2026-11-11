@@ -1,6 +1,6 @@
 # pstack in T3 Code
 
-pstack skills use Cursor names. In T3 Code, read this file once per session, then map each Cursor name in a skill with the tables below. `<skills>` means the folder that holds `poteto-mode/` and this file's folder, usually `~/.agents/skills/` or a project's `.agents/skills/`. If a Cursor field has no row, drop it and say so. Never pass a field or value the tool schema rejects.
+pstack skills use Cursor names. In T3 Code, read this file once per session, then map each Cursor name in a skill with the tables below. `<skills>` means the folder that holds `poteto-mode/` and this file's folder. That is usually `~/.agents/skills/`, or `~/.claude/skills/` in a Claude thread, or the same folder inside a project. If a Cursor field has no row, drop it and say so. Never pass a field or value the tool schema rejects.
 
 T3 Code runs many providers. These rows hold in every T3 thread, whichever provider runs it. Spawn pstack subagents with the T3 tools below, not a provider's own subagent tool, so per-role models and cross-provider panels work and every child shows in the T3 app. A session may list a T3 tool with a prefix, such as `mcp__t3-code__delegate_task`, or defer it until you load it with the session's tool search. It is the same tool.
 
@@ -73,9 +73,9 @@ Run it in the operator's thread, not as a child, because it asks questions. Read
 
 | Cursor | T3 Code |
 | --- | --- |
-| `.cursor/skills/`, `~/.cursor/skills/` | `.agents/skills/`, `~/.agents/skills/` |
+| `.cursor/skills/`, `~/.cursor/skills/` | `.agents/skills/`, `~/.agents/skills/`. Codex and Pi read those. Claude reads `.claude/skills/` and `~/.claude/skills/`. Write a new project skill to `.agents/skills/<name>/`, then link it for Claude threads with `ln -s ../../.agents/skills/<name> .claude/skills/<name>`. |
 | `~/.cursor/plugins/`, `.cursor-plugin/plugin.json` | `<skills>`. pstack's version is in `<skills>/pstack-t3/pstack.json`. |
-| `plugins/cache/` | The installed pstack skills in `<skills>`. Never edit one, because the next install rewrites it. Copy the skill to the project's `.agents/skills/<skill>/` and edit the copy. `~/.agents/skills/<skill>/` is the installed skill itself, so never copy there. |
+| `plugins/cache/` | The installed pstack skills in `<skills>`. Never edit one, because the next install rewrites it. Copy the skill to the project's `.agents/skills/<skill>/` and edit the copy. `~/.agents/skills/<skill>/` and `~/.claude/skills/<skill>/` are the installed skill itself, so never copy there. |
 | `.cursor/rules/*.mdc`, always-applied rules | The repo's `AGENTS.md`, or `CLAUDE.md` when the repo keeps its rules there. The model rule is the exception. See Models. |
 | `.cursor/worktrees/` | The worktrees `git worktree list` shows. `t3_worktree_list` and `t3_worktree_status` add which T3 thread uses one, but leave out detached worktrees. |
 | A bundled script that reads `~/.cursor/` | Trust only its git columns. `poteto-mode/scripts/worktree-audit.sh` reads chat age from Cursor transcripts, so in T3 its chat column is empty and a `safe` bucket is unproven. Before you remove a worktree, confirm with `git worktree list` and `t3_thread_list` that no thread or delegated child is live in it. |

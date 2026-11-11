@@ -11,7 +11,7 @@ Read the full adapter, `SKILL.md` beside this file, only before you do one of th
 | Run another pstack skill (`/name` or "the **name** skill") | Read `<skills>/<name>/SKILL.md` and follow it. |
 | `Read`, `Grep`, `Glob` | The session's file and search tools, or `cat` and `rg` in the shell. |
 | `readonly: true` | Edit no files, run no git command that writes, and use `git --no-optional-locks` for status. |
-| `.cursor/skills/`, `~/.cursor/skills/` | `.agents/skills/`, `~/.agents/skills/` |
+| `.cursor/skills/`, `~/.cursor/skills/` | `.agents/skills/`, `~/.agents/skills/`. In a Claude thread, `.claude/skills/` and `~/.claude/skills/`. |
 | `~/.cursor/plugins/`, `plugins/cache/` | `<skills>`. Never edit an installed skill. Copy it to the project's `.agents/skills/<skill>/` and edit the copy. |
 | `.cursor/rules/*.mdc`, always-applied rules | The repo's `AGENTS.md`, or `CLAUDE.md` when the repo keeps its rules there. |
 | The current agent's store | `~/.agents/pstack-store/<repo-slug>/`. Create it. The Project store is `projects/<project-slug>/` inside it. Read it, and leave writing it to the coordinator. |

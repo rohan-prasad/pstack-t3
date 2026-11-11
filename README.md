@@ -23,7 +23,9 @@ cd pstack-t3
 ./install.sh
 ```
 
-`install.sh` links every `skills/*` directory into `~/.agents/skills/`, where T3 Code reads skills for every provider. Use `./install.sh --project /path/to/repo` to install into a project's `.agents/skills/` instead. Re-run it after you pull. It also removes links to skills that no longer exist.
+T3 Code lists the skills each provider finds in its own folder. So `install.sh` links every `skills/*` directory into `~/.agents/skills/`, which Codex and Pi read, and into `~/.claude/skills/`, which Claude Code reads. It skips the Claude folder when `~/.claude` does not exist, and honors `CLAUDE_CONFIG_DIR`. Use `./install.sh --project /path/to/repo` to install into a project's `.agents/skills/` and `.claude/skills/` instead. Re-run it after you pull. It also removes links to skills that no longer exist.
+
+After an install, restart the agent session in T3 Code or start a new thread. The skills then show under `$` in the composer, and under `/` unless you turned that off.
 
 pstack has plain skill names such as `how`, `why`, and `tdd`. When a link with one of those names already points somewhere else, `install.sh` leaves it and says so. Pass `--force` to replace it, which you need once when you move from another p3-stack checkout to this one.
 
@@ -83,7 +85,7 @@ A weekly workflow opens the bump as a PR with that list in its body, and opens a
 - Adds the child adapter and the read-on-demand parts described under [Token cost](#token-cost).
 - Routes by model family across providers, as described under [Providers](#providers).
 - `--bump` lists new upstream text for review, and the sync workflow reports a failed bump.
-- `install.sh` no longer replaces a link that belongs to another skill pack.
+- `install.sh` no longer replaces a link that belongs to another skill pack, and it also links the skills where Claude Code reads them. The original linked only `~/.agents/skills/`, which Claude threads do not read.
 
 ## Credits
 
