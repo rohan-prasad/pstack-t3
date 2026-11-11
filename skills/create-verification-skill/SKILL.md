@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Create a verification skill
 
-In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code.
+In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](../pstack-t3/child.md) in its place.
 
 Every serious project needs a scripted way to drive the real app and prove behavior: launch it, exercise a feature the way a user would, and capture evidence. This skill generates that as a project-local skill (`.cursor/skills/verify-<app>/`) tailored to the repo. You write the generator's output for the next agent, not for a human: it will be read cold, mid-task, by an agent that has never seen the app.
 

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Arena
 
-In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code.
+In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](../pstack-t3/child.md) in its place.
 
 Open a todolist with one entry per phase (Frame, Fan out, Cross-judge, Pick, Graft, Verify) before launching anything.
 

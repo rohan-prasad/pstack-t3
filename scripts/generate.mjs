@@ -22,7 +22,13 @@ const ADAPTER = "docs/harness/t3-code.md";
 const EXTRAS = "docs/harness/t3-code";
 const EXTRAS_SOURCE = join(ROOT, EXTRAS);
 const HARNESS = "pstack-t3";
+// The short adapter a delegated child reads in place of the full one. Every child pays for it, so it has a word budget.
+const CHILD = `${EXTRAS}/child.md`;
+const CHILD_WORD_BUDGET = 500;
 const COMMAND = "node scripts/generate.mjs";
+// What a bump writes for the person who reviews it. The sync workflow puts it in the PR body.
+const REVIEW_PATH = join(ROOT, ".cache", "bump-review.md");
+const REVIEW_LIMIT = 150;
 // Inline links, with or without a title, and reference definitions. The destination is group 2.
 const LINK = /(\]\(<?)([^)\s>]+)(>?(?:\s+(?:"[^"]*"|'[^']*'))?\))|(^[ ]{0,3}\[[^\]]+\]:[ \t]*<?)([^\s>]+)/gm;
 function rewriteLinks(text, rewrite) {
@@ -46,6 +52,7 @@ const TERMS = [
   { key: "`run_in_background: true`", re: /run_in_background|is_background/ },
   { key: "`resume`", re: /`resume`|\bresume (an|the) agent\b/i },
   { key: "`file_attachments`", re: /file_attachments/ },
+  { key: "Fork a worker", re: /\bFork when\b|\bfork (a|the) (worker|subagent|agent)\b/i },
   { key: "claude-", re: /\bclaude-[a-z]+-\d/ },
   { key: "grok-", re: /\b(cursor-)?grok-\d|\bcomposer-/ },
   { key: "gpt-", re: /\bgpt-\d/ },
@@ -57,9 +64,12 @@ const TERMS = [
   { key: ".cursor/rules/", re: /\.cursor\/rules|always-applied rule/ },
   { key: ".cursor/worktrees/", re: /\.cursor\/worktrees/ },
   { key: "The current agent's store", re: /agent's store|agent store/ },
+  { key: "The Project store", re: /Project store/ },
+  { key: "The Project tracker", re: /Project tracker/ },
   { key: "agent-transcripts", re: /agent-transcripts|\.cursor\/projects/ },
   { key: "`pstack/skills/<path>`", re: /\bpstack\/skills\// },
   { key: "/loop", re: /\/loop\b/ },
+  { key: "PR and CI event subscriptions", re: /event subscriptions?/ },
   { key: "make-bot-ui", re: /Grok Bot|X-Automation-Key|Routines list/ },
   { key: "Bugbot", re: /Bugbot/ },
   { key: "Cursor Automations", re: /Cursor [Aa]utomation|cursor\.(sh|com)\/automations|update_state|SendToUser|scheduled automation|automation pack/ },
@@ -121,13 +131,46 @@ function pstackVersion(source) {
   return "unknown";
 }
 
+// Every line of pstack's skill text at a checkout, with the file it is in.
+function skillLines(source) {
+  const lines = new Map();
+  for (const dir of ["skills", "agents", "docs/guide"]) {
+    if (!existsSync(join(source, dir))) continue;
+    for (const path of walk(join(source, dir)).filter((path) => path.endsWith(".md"))) {
+      for (const line of readFileSync(path, "utf8").split("\n")) {
+        if (line.trim()) lines.set(line.trim(), relative(source, path));
+      }
+    }
+  }
+  return lines;
+}
+
+// The term list only finds names it already knows. So a bump lists every new line that names a tool, a field, or
+// Cursor, for a person to read and map. A new mechanic with a plain-English name, such as a tracker, shows up here.
+function review(before, after, from, to) {
+  const fresh = [...after].filter(([text]) => !before.has(text) && /`|\bCursor\b|\bharness\b/.test(text));
+  const listed = fresh.slice(0, REVIEW_LIMIT).map(([text, path]) => `- \`${path}\`: ${text}`);
+  if (fresh.length > REVIEW_LIMIT) listed.push(`- and ${fresh.length - REVIEW_LIMIT} more lines. Read the upstream diff.`);
+  const body =
+    fresh.length === 0
+      ? "No new skill text names a tool, a field, or Cursor."
+      : `New skill text that names a tool, a field, or Cursor. The generator cannot tell a new mechanic from a reworded old one, so read each line and add an adapter row and a term where T3 Code differs.\n\n${listed.join("\n")}`;
+  mkdirSync(dirname(REVIEW_PATH), { recursive: true });
+  writeFileSync(REVIEW_PATH, `pstack ${from} to ${to}\n\n${body}\n`);
+  for (const [text, path] of fresh.slice(0, 20)) console.log(`REVIEW ${path}: ${text.length > 160 ? `${text.slice(0, 160)}...` : text}`);
+  if (fresh.length > 0) console.log(`REVIEW ${fresh.length} new lines to read, listed in ${relative(ROOT, REVIEW_PATH)}`);
+}
+
 function bump(ref) {
   const lock = readLock();
   const line = git(ROOT, "ls-remote", lock.repository, ref.startsWith("refs/") ? ref : `refs/heads/${ref}`);
   const commit = line.split(/\s+/)[0] || (/^[0-9a-f]{40}$/.test(ref) ? ref : undefined);
   if (!commit) throw new Error(`No commit found for ${ref} in ${lock.repository}`);
+  const before = skillLines(checkout(lock));
   const next = { ...lock, commit };
-  next.version = pstackVersion(checkout(next));
+  const source = checkout(next);
+  next.version = pstackVersion(source);
+  review(before, skillLines(source), `${lock.version} (${lock.commit.slice(0, 7)})`, `${next.version} (${commit.slice(0, 7)})`);
   writeFileSync(LOCK_PATH, `${JSON.stringify(next, null, 2)}\n`);
   console.log(`pinned pstack ${next.version} at ${commit}`);
   return next;
@@ -170,6 +213,13 @@ const adapter = readFileSync(ADAPTER_SOURCE, "utf8");
 const problems = [];
 
 if (skills.includes(HARNESS)) problems.push(`pstack now ships a skill named ${HARNESS}. Rename the harness folder.`);
+
+if (!existsSync(join(ROOT, CHILD))) {
+  problems.push(`${CHILD} is missing. Every skill's adapter line links to it.`);
+} else {
+  const words = readFileSync(join(ROOT, CHILD), "utf8").split(/\s+/).filter(Boolean).length;
+  if (words > CHILD_WORD_BUDGET) problems.push(`${CHILD} has ${words} words, over its budget of ${CHILD_WORD_BUDGET}. Every delegated child reads it.`);
+}
 
 // A skill that names another skill without linking it needs the adapter's row for running one.
 const ROUTE_KEY = "Run another pstack skill";
@@ -226,9 +276,10 @@ function resolve(from, href) {
 
 function adapterLine(from) {
   const href = posix.relative(posix.dirname(from), ADAPTER);
+  const child = posix.relative(posix.dirname(from), CHILD);
   return (
     `In T3 Code, read [the T3 Code adapter](${href}) once per session before you follow this skill. ` +
-    "It maps the Cursor names in pstack to T3 Code."
+    `It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](${child}) in its place.`
   );
 }
 

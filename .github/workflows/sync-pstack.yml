@@ -1,5 +1,7 @@
 name: sync pstack
 
+# GitHub turns scheduled workflows off on a fork until someone enables Actions for it. The PR step also needs
+# "Allow GitHub Actions to create and approve pull requests" under Settings, Actions, General.
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -8,17 +10,21 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   bump:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Pin pstack main and regenerate
-        run: node scripts/generate.mjs --bump
+        run: node scripts/generate.mjs --bump 2>&1 | tee "$RUNNER_TEMP/bump.log"
       - name: Open a PR when pstack moved
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,12 +36,36 @@ jobs:
           version=$(node -p 'require("./pstack.lock.json").version')
           commit=$(node -p 'require("./pstack.lock.json").commit.slice(0, 7)')
           branch="sync/pstack-$version-$commit"
+          {
+            echo "Pins pstack to cursor/plugins@$commit and regenerates \`skills/\`."
+            echo
+            cat .cache/bump-review.md
+          } > "$RUNNER_TEMP/body.md"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git commit -am "chore: sync pstack $version ($commit)" --quiet
-          git add -A && git commit --amend --no-edit --quiet
+          git add -A
+          git commit -m "chore: sync pstack $version ($commit)" --quiet
           git push --force origin "$branch"
-          gh pr create --head "$branch" --title "chore: sync pstack $version" \
-            --body "Pins pstack to cursor/plugins@$commit and regenerates \`skills/\`. Read the upstream diff for new mechanics the adapter does not map yet." \
+          gh pr create --head "$branch" --title "chore: sync pstack $version" --body-file "$RUNNER_TEMP/body.md" \
             || echo "A PR for $branch is already open."
+      - name: Open an issue when the bump fails
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="pstack sync failed"
+          if [ "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq length)" != "0" ]; then
+            echo "An issue is already open."
+            exit 0
+          fi
+          {
+            echo "The weekly pstack bump failed, so this repo no longer follows pstack. Each FAIL line names an adapter row or a link to fix. Fix it, then run \`node scripts/generate.mjs --bump\`."
+            echo
+            echo '```'
+            grep -E '^(FAIL|REVIEW)' "$RUNNER_TEMP/bump.log" | head -60 || tail -30 "$RUNNER_TEMP/bump.log"
+            echo '```'
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue.md"

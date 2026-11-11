@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Interrogate
 
-In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code.
+In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](../pstack-t3/child.md) in its place.
 
 Adversaries try to break a change or a design. A finding survives only when a run proves it. Report the findings. Do not apply fixes.
 

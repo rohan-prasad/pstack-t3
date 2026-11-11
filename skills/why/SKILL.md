@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Why
 
-In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code.
+In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](../pstack-t3/child.md) in its place.
 
 Investigate the motivation and intent behind code. The companion `how` skill answers what the code does and how it works. `why` answers what forces led to its shape.
 
