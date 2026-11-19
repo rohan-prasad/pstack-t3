@@ -8,110 +8,66 @@ disable-model-invocation: true
 
 # pstack in T3 Code
 
-pstack skills use Cursor names. In T3 Code, read this file once per session, then map each Cursor name in a skill with the tables below. `<skills>` means the folder that holds `poteto-mode/` and this file's folder. That is usually `~/.agents/skills/`, or `~/.claude/skills/` in a Claude thread, or the same folder inside a project. If a Cursor field has no row, drop it and say so. Never pass a field or value the tool schema rejects.
+pstack skills use Cursor names. In T3 Code, read this file once per session, then map each Cursor name in a skill with the tables below. Read it again whenever these tables are not in your context, such as after a compaction. `<skills>` means the folder that holds `poteto-mode/` and this file's folder. That is usually `~/.agents/skills/`, or `~/.claude/skills/` in a Claude thread, or the same folder inside a project. If a Cursor field has no row, drop it and say so. Never pass a field or value the tool schema rejects.
 
-T3 Code runs many providers. These rows hold in every T3 thread, whichever provider runs it. Spawn pstack subagents with the T3 tools below, not a provider's own subagent tool, so per-role models and cross-provider panels work and every child shows in the T3 app. A session may list a T3 tool with a prefix, such as `mcp__t3-code__delegate_task`, or defer it until you load it with the session's tool search. It is the same tool.
+T3 Code runs many providers. These rows hold in every T3 thread, whichever provider runs it, except where a row names a provider. A session may list a T3 tool with a prefix, such as `mcp__t3-code__delegate_task`, or defer it until you load it with the session's tool search. It is the same tool.
 
 The pstack guide and README in this tree describe Cursor and Claude Code. Read their steps through this file too.
 
-## Children
+## T3 Code's own rules
 
-A delegated child reads [the child adapter](child.md) in place of this file. It is about a seventh of this file's size, and every child pays for what it reads. A brief for a child that follows a pstack skill, playbook, prompt template, or agent brief gives the absolute path `<skills>/pstack-t3/child.md` and says to read it first. Name this file in a brief only when the child will spawn its own subagents, schedule a wake, or read other threads.
+T3 Code gives every thread its own rules for subagents, pull requests, browser previews, and waiting. Each row here maps a pstack step onto those rules, so a thread that follows the row follows both. A T3 Code rule decides how a step runs. It is not a reason to drop the step. When T3 Code forbids the only way to run a step, skip the step with the line under Cursor-only features.
+
+By T3 Code's default, an ordinary coding task needs no T3 tools. A task the operator starts with `/poteto-mode` is not ordinary. A playbook step that delegates, proves, or reviews still runs when the change looks small.
+
+Two choices belong to the operator. They are lines in `~/.agents/pstack-models.md`, which `/setup-pstack` writes. `# browser proof` says whether a poteto-mode task may use the browser without being asked each time. `# when a model cannot run` says whether to ask the operator, switch models, or stop. A row never makes either choice. With no line, T3 Code's own rule holds.
+
+## Start of a run
+
+These rows apply in a thread where `/poteto-mode` ran and the operator has not ended it. A thread that runs another pstack skill on its own skips them.
+
+T3 Code may show the text you write before a tool call as one line. So the operator cannot rely on an opening or a todolist that you write there. `send_to_user` shows a message in full while the run goes on.
+
+| pstack | T3 Code |
+| --- | --- |
+| Your first message on a task | One `send_to_user` call. Match the playbook, read its file in full, and send the message before any other work. It gives what the skill asks for: the goal, the problem, and the smallest change you expect. Then it gives the playbook's name and its steps as a checklist with one line per step. `send_to_user` takes 4,000 characters, so cut each step to its first sentence. Send it and keep working. Do not wait for an answer, and do not repeat it in your final reply. A fully specified one-line edit needs no opening. Neither does a question you answer from what this thread already holds, or a correction or a status request inside the task you are on. In a session with no `send_to_user`, put the opening at the top of your first reply. |
+| Open a todolist | The session's todo or plan tool when it has one, with the playbook's steps copied in whole. Otherwise the checklist in the opening is the todolist. Send it again only when a step is skipped, added, or blocked. The final reply says how each step ended, as done or as `skip: <reason>`. |
+| The chat that receives `/poteto-mode` | T3 Code has no mode toggle, so the operator types `$poteto-mode` or `/poteto-mode`. The mode then holds for the rest of the thread. A later message that names no skill is a new poteto-mode task. It gets its own playbook, and its own opening unless the first row says it needs none. The mode ends when the operator writes `drop poteto-mode`. |
+| A compaction | A summary keeps none of the skill text. Before you reply or use any other tool, read again, in full, `<skills>/poteto-mode/SKILL.md`, this file, and the playbook you are in. When you write a compaction summary, put those three paths in it and say that poteto-mode is on. |
 
 ## Tools
 
 | Cursor | T3 Code |
 | --- | --- |
-| `Task` | `delegate_task`. The child sees only the `task` text, never this conversation, so every brief stands alone: goal, scope, file paths, done check, and what to report. When the child follows a pstack skill, playbook, or prompt template, the brief also gives the absolute path of the child adapter and says to read it first. See Children. |
-| `subagent_type` | Drop it. Set `role` instead: `implementation` for code, `review` for reviewers, `research` for read-only investigators, `test` for verifiers, `general` otherwise. See Subagent fields for named agents. |
-| `AskQuestion` | `AskUserQuestion` when the session offers it and the choice fits its option limit. Otherwise ask in plain text and end the turn. A delegated child cannot reach the operator, so a skill that must ask, such as `setup-pstack`, runs in the operator's thread. To answer a question another thread is waiting on, use `t3_pending_request_list`, `t3_pending_request_read`, and `t3_pending_request_respond`. |
-| Open a todolist | Use the session's todo or plan tool if it has one. Otherwise keep the list in your reply and update it at each phase. |
-| Run another pstack skill (`/name` or "the **name** skill") | Read `<skills>/<name>/SKILL.md` and follow it. When you tell the user to type it, write `/<name>`. |
+| `Task`, its fields, and every model slug | `delegate_task`. Read [Spawning subagents in T3 Code](spawning.md) before the first spawn and before you pick a model. It maps `subagent_type`, `readonly`, `environment`, `run_in_background`, `resume`, each model slug, and the role lines of `~/.agents/pstack-models.md`. |
+| `AskQuestion` | The session's own question tool, such as `AskUserQuestion`, when it has one and the choice fits its option limit. Otherwise ask in plain text and end the turn. When the question refers to a draft or a list, show that with `send_to_user` first. A skill that must ask, such as `setup-pstack`, runs in the operator's thread, never in a child. To answer a question another thread is waiting on, use `t3_pending_request` with `action` set to `list`, `read`, then `respond`. |
+| Run another pstack skill (`/name` or "the **name** skill") | Read `<skills>/<name>/SKILL.md` and follow it. The session's skill tool refuses most pstack skills, so do not call it for one. When you tell the user to type it, write `$<name>`. |
 | `Read`, `Grep`, `Glob` | The session's file and search tools, or `cat` and `rg` in the shell. |
+| `/visualize`, a chart or a diagram shown inline | Write the page as HTML, check it with `html_preview`, then show it with `html_render`. A screenshot or a video that the work produced embeds with Markdown image syntax and its absolute path. |
+| A `.cursor/` path, an agent or Project store, a tracker, a transcript, a `pstack/skills/` path, a `cursor/plugins` URL | Read [Paths in T3 Code](paths.md) before you use it. Never edit a file under `<skills>`, because the next install rewrites it. |
 
-## Subagent fields
-
-| Cursor | T3 Code |
-| --- | --- |
-| `subagent_type: generalPurpose` | A plain `delegate_task`. |
-| `poteto-agent`, `comment-sicko` | A `delegate_task` whose `task` starts with the body of `<skills>/pstack-t3/agents/poteto-agent.md` or `<skills>/pstack-t3/agents/comment-sicko.md`, then the absolute path of the child adapter with "read it first", then the brief. For `poteto-agent`, the brief also carries the absolute path of `<skills>/poteto-mode/SKILL.md`. |
-| `readonly: true` | `role: "research"` or `"review"`, and the brief says "do not edit files, run no git command that writes, and use `git --no-optional-locks` for status". T3 has no read-only switch. Check `git --no-optional-locks status` afterward, and treat a clean tree as evidence, not proof. |
-| `readonly: false` | Omit. Children keep the thread's MCP servers. |
-| `environment: "cloud"` | `isolation: "worktree"`. The child gets its own checkout of this thread's current local commit, after project setup. Uncommitted edits are not copied, so commit or name what it needs. |
-| `environment: "local"` | Omit, or `isolation: "shared"`. Only one writer per checkout. |
-| `cloud_base_branch: <b>` | `isolation: "worktree"`. A verifier runs `git checkout --detach <b>` first. A writer runs `git switch -c <its own branch> <b>`. Git refuses a branch that another worktree has checked out, so never check out `<b>` itself. |
-| `run_in_background: true`, `is_background` | `mode: "async"`, the default. The child's completion wakes this thread, so end the turn instead of polling. Use `task_status` only when you need a result mid-turn, and `task_cancel` to stop one. |
-| `resume` | A fresh `delegate_task` with the original brief, every later directive, and the earlier result pasted in. When poteto-mode's Subagents section allows reuse, because the work needs that agent's uncommitted changes, checkout, or running process, send it with `t3_thread_send` to its `childThreadId`. A stop or hold order to a running child is `t3_thread_send` with `mode: "steer"`, or `task_cancel`. Every review round is a fresh `delegate_task`. |
-| `file_attachments` | List the paths in the brief. |
-| Fork a worker, when new work needs its built state | T3 cannot start a child from another child's checkout or process. Send the new work to that worker's `childThreadId` with `t3_thread_send`. When the work only needs its commits, have the worker commit, then give a fresh `delegate_task` child the branch. |
-
-Every pstack worker, verifier, and PR owner is a `delegate_task` child, so it reports back to its parent. Use `t3_thread_launch` only when the operator asks for a separate top-level thread. Then pass `modelSelection` `{"instanceId": "<instance>", "model": "<model>", "options": {...}}` from the role's line, a `workspaceStrategy`, and follow the thread with `t3_thread_read` or `t3_thread_wait`, because it never wakes you on its own.
-
-## Models
-
-pstack names models by slug. T3 names them by provider instance, model id, and options, all listed by `orchestrator_capabilities`. Call it once before the first spawn. Only an instance whose `canRunChildTask` is true can take a child.
+## Pull requests
 
 | Cursor | T3 Code |
 | --- | --- |
-| `claude-<family>-<version>-<effort>[-fast]`, such as `claude-opus-5-5-xhigh` | The first instance with `driverKind` `claudeAgent` that can run a child and lists the model. `target: {"providerInstanceId": "<instance>", "model": "claude-opus-5-5", "options": {"<its reasoning option id>": "xhigh"}}`. `-fast` sets the model's fast option, such as `fastMode: true`, when it has one. |
-| `grok-*`, `cursor-grok-*`, `composer-*`, such as `grok-4.7-xhigh-fast` | The first instance that can run a child and lists a Grok model. That is a Grok instance, or a multi-model instance such as Pi or OpenCode whose model id names Grok, such as `xai/grok-4.7`. Otherwise the code fallback below. Keep the slug's effort token and its `fast`. |
-| `gpt-*`, such as `gpt-5.6-sol-max` | The first instance with `driverKind` `codex` that can run a child and lists the model, with its reasoning option set to the effort token. `-fast` sets its fast service tier when it has one. |
-| A model of any other maker, such as Gemini, Kimi, Qwen, or a local model | The first instance that can run a child and lists it, usually Pi or OpenCode. No pstack default names one, so it comes only from a role line. |
-| `inherit-parent` or `auto` | Omit `target`, so the child runs on this thread's model. |
-| The `pstack-models.mdc` rule, `~/.cursor/rules/pstack-models.mdc` | `~/.agents/pstack-models.md`. No provider loads it on its own, so read it right after this file. If the file or the role's line is missing, use the skill's default slug, mapped with these rows. |
-| A role value `<instance>/<model> <effort>[ fast]`, such as `claudeAgent/claude-opus-5-5 xhigh` | `target: {"providerInstanceId": "<instance>", "model": "<model>", "options": {...}}` with the effort on the model's reasoning option and `fast` on its fast option. A panel line lists values separated by `, `. |
-
-**Families.** A model's family is its maker, read from the model id. Drop a `<provider>/` prefix first, so `xai/grok-4.7` reads as `grok-4.7`. Then `claude-*` is Claude, `gpt-*` is OpenAI, `grok-*` is Grok, and any other id is the maker its label names. The provider instance only routes the call. Two instances serving one maker are one family. Where a skill groups models by slug prefix (`claude-*`, `grok-*`), group them by family. "The same family's nearest slug" is the same model at the nearest effort it offers, or the same family's next model.
-
-**Official harness first.** A Claude model runs on a `claudeAgent` instance and a GPT model on a `codex` instance. A multi-model instance such as Pi or OpenCode that lists the same model takes it only when the role line names that instance.
-
-**Code fallback.** With no usable Grok model, a Grok slug maps to the strongest listed model, on an instance that can run a child, whose family differs from the `judgment and prose` model's family. The strongest is the newest version of that family's top line. Never pick a model whose id or label marks it small, such as `mini`, `nano`, `lite`, `flash`, or `haiku`. That keeps a two-family panel two-family. With no other family available, omit `target` and say the panel is one family. Say which you chose.
-
-**Effort.** The reasoning option's id differs by provider, such as `effort`, `reasoningEffort`, `thinking`, or `variant`. Read it from the model's `options`. pstack's ladder is `max` > `xhigh` > `high` > `medium` > `low`. Values above `max`, such as `ultra`, `ultracode`, or `ultrathink`, are off the ladder. Never pick one unless the role line names it.
-
-**Rejected targets.** If `delegate_task` rejects an adjusted target, use the role's line or default and say so. If it rejects that too, call `orchestrator_capabilities` again and use the same family's nearest model and effort. If the instance is gone, use the code fallback.
-
-**Failed instances.** When a child fails with a usage, billing, or sign-in error, stop using that instance for the rest of the session, even while `orchestrator_capabilities` still says it can run a child. Move the role to the same family on another instance, or to the code fallback, and say so. Never send the same brief to the failed instance again.
-
-## setup-pstack
-
-Run it in the operator's thread, not as a child, because it asks questions. Read [setup-pstack in T3 Code](setup-pstack.md) before you follow the skill.
-
-## Paths
-
-| Cursor | T3 Code |
-| --- | --- |
-| `.cursor/skills/`, `~/.cursor/skills/` | `.agents/skills/`, `~/.agents/skills/`. Codex and Pi read those. Claude reads `.claude/skills/` and `~/.claude/skills/`. Write a new project skill to `.agents/skills/<name>/`, then link it for Claude threads with `ln -s ../../.agents/skills/<name> .claude/skills/<name>`. |
-| `~/.cursor/plugins/`, `.cursor-plugin/plugin.json` | `<skills>`. pstack's version is in `<skills>/pstack-t3/pstack.json`. |
-| `plugins/cache/` | The installed pstack skills in `<skills>`. Never edit one, because the next install rewrites it. Copy the skill to the project's `.agents/skills/<skill>/` and edit the copy. `~/.agents/skills/<skill>/` and `~/.claude/skills/<skill>/` are the installed skill itself, so never copy there. |
-| `.cursor/rules/*.mdc`, always-applied rules | The repo's `AGENTS.md`, or `CLAUDE.md` when the repo keeps its rules there. The model rule is the exception. See Models. |
-| `.cursor/worktrees/` | The worktrees `git worktree list` shows. `t3_worktree_list` and `t3_worktree_status` add which T3 thread uses one, but leave out detached worktrees. |
-| A bundled script that reads `~/.cursor/` | Trust only its git columns. `poteto-mode/scripts/worktree-audit.sh` reads chat age from Cursor transcripts, so in T3 its chat column is empty and a `safe` bucket is unproven. Before you remove a worktree, confirm with `git worktree list` and `t3_thread_list` that no thread or delegated child is live in it. |
-| The current agent's store (path in the system prompt) | `~/.agents/pstack-store/<repo-slug>/`. Create it. |
-| The Project store | `~/.agents/pstack-store/<repo-slug>/projects/<project-slug>/`. Create it. A worktree child can read it, because it sits outside every checkout. Only the coordinator writes it. |
-| The Project tracker (`notes.md`) | `notes.md` in the Project store. T3 has no tracker of its own. Keep each worker's `taskId`, `childThreadId`, branch, PR, and verdict there, so a restart or a new coordinator thread can pick the program up. |
-| `pstack/skills/<path>` in a command, or `git show origin/main:pstack/skills/<path>` | `<skills>/<path>`, as an absolute path. The installed tree is the trunk copy, so read it with `cat`. Keep `git show origin/main:` for files in the working repo, such as a project verification skill or `AGENTS.md`. A plan needs at least one such line, because `check-plan.mjs` looks for it. |
-| `https://github.com/cursor/plugins/blob/main/pstack/<path>` | The local copy when this tree ships it: `<skills>/<name>/` for skills, `<skills>/pstack-t3/guide/` for `docs/guide/`, `<skills>/pstack-t3/README.md`, `<skills>/pstack-t3/agents/`. Read it and never fetch it. Give the user the URL when they need a link. |
-| Transcripts in `~/.cursor/projects/<slug>/agent-transcripts/` | T3 threads. Find them with `t3_thread_search` or `t3_thread_list`. Read one with `t3_thread_read`, `view: "messages"` for the conversation or `"activity"` for tool calls. A delegated child's transcript is its `childThreadId`. A thread's last activity, not a file mtime, says whether it is live. Stay in this project, as the skills' rule against globbing across `~/.cursor/projects/*/` says. Omit `projectId`, so both tools use the calling thread's project, and never read another project's threads unless the user asks. `t3_thread_search` filters the app's global top matches to one project, so it can return fewer than `limit`. For a full sweep of a time window, page through `t3_thread_list`. |
+| A built-in PR tool | The forge command that the step gives, such as `gh pr create`. As your next call, link every PR you open, take over, or push to, each layer of a stack included. Use `link_pull_request`, or `link_pull_requests` for several. If linking fails, say so. |
+| PR and CI event subscriptions, a wait on a PR | `watch_pull_request`, from the top-level thread only. Handle the comments already there, push what the branch needs, arm the watch, and end the turn. The watch stays armed after each wake, so never arm it again on a wake. A wake is not a merge decision, so read the PR's state yourself. Call `unwatch_pull_request` before you hand work back. |
+| `scripts/watch-pr/watch-pr` | Run it only with `--status-only`, which prints the PR's state once. The bare command polls until a verdict, and T3 Code allows no polling wait on a PR. |
+| A child that owns a PR | It links the PR and never watches it. After any PR work, its last line is `PR <full URL>, head <SHA>, checks and reviews <state>`. When it must wait, it returns. Each parent passes that line up until the top-level thread watches the PR. On a wake, the top-level thread fixes a small finding itself. It hands a larger one to a fresh child for that PR, with the owner's consolidated brief. |
 
 ## Waking and scheduling
 
 | Cursor | T3 Code |
 | --- | --- |
-| `/loop`, `/loop 1h`, Cursor Automations, `SendToUser`, a routine, a heartbeat | Read [Waking and scheduling in T3 Code](waking.md) before you map it. Never poll in a loop instead. |
-| PR and CI event subscriptions | `watch_pull_request`, from the top-level thread only. See the built-in PR tool row. |
+| `/loop`, `/loop 1h`, Cursor Automations, `SendToUser`, a routine, a heartbeat, Pause safely, Session pickup | Read [Waking and scheduling in T3 Code](waking.md) before you map it. Never poll in a loop instead. |
+
+## setup-pstack
+
+Run it in the operator's thread, not as a child, because it asks questions. Read [setup-pstack in T3 Code](setup-pstack.md) before you follow the skill.
 
 ## make-bot-ui
 
 Read [make-bot-ui in T3 Code](make-bot-ui.md) before you follow the skill.
-
-## Pause safely and Session pickup
-
-At a pause, set `enabled: false` with `update_scheduled_task` on every schedule the program created, then stop running children with `task_cancel`. Messages sent while a thread is busy wait in its queue. On resume or pickup, read the thread with `t3_thread_read`, then list its queued messages with `t3_queue_list` and its `threadId`. A queued message can change the plan, so handle it before the resume note's first action.
-
-## create-verification-skill
-
-For a browser surface with no harness of its own, write each feature's driving section with the `preview_*` tools. Follow [the T3 version of the create-note example](examples/create-note.md) in place of the skill's `control-notes browser` example. It shows one tab per run, role locators, waits, and which `preview_snapshot` call gives which proof. A simulator surface uses the `device_*` tools in the same shape. `maintain-verification-skill` keeps maps in this shape.
 
 ## Cursor-only features
 
@@ -120,12 +76,11 @@ When a step needs a feature with no row, put one line in your reply, `Skipped in
 | Cursor | T3 Code |
 | --- | --- |
 | Bugbot | Bugbot comments on a GitHub PR are ordinary review threads, so triage them with the forge command that the step gives. Skip a step that starts, waits for, or configures Bugbot when the PR has no Bugbot check or comment. |
-| Cursor cloud agent, cloud VM, its status in the Cursor dashboard | A `delegate_task` with `isolation: "worktree"`, as in Subagent fields. Its status is `task_status`. Its log is `t3_thread_read` on its `childThreadId`. Skip a step that needs the cloud machine itself. |
-| A built-in PR tool | The forge command that the step gives, such as `gh pr create`. Then call `link_pull_request` for every PR you open or take over, each layer of a stack included. Only the top-level thread can call `watch_pull_request`. A delegated child at any depth that owns a PR uses the step's `scripts/watch-pr` for status, and when it must wait, it returns with the PR URL and what it waits for. Each parent passes that up until the top-level thread watches the PR. On a wake, the top-level thread hands the event to a fresh child for that PR with the owner's consolidated brief. Call `unwatch_pull_request` before you hand work back. |
-| `control-ui`, `control-cli` from `cursor-team-kit` | Browser and web UIs: `preview_open`, `preview_navigate`, `preview_snapshot`, `preview_click`, `preview_type`, `preview_press`, `preview_wait_for`, `preview_resize`, and `preview_recording_start` / `preview_recording_stop` for video. iOS and Android simulators: `device_list`, `device_open`, `device_screenshot`, `device_close`. CLIs and TUIs: drive them from the shell, and capture the output as evidence. An Electron app with no preview path is a skip. |
+| Cursor cloud agent, cloud VM, its status in the Cursor dashboard | A `delegate_task` with `isolation: "worktree"`, as [Spawning subagents in T3 Code](spawning.md) says. Its log and its state are `t3_thread_read` on its `childThreadId`. Its result is `task_status`, after its completion wakes you. Skip a step that needs the cloud machine itself. |
+| `control-ui`, `control-cli` from `cursor-team-kit`, `create-verification-skill` | Read [Proof in T3 Code](proof.md) before you drive a browser, a simulator, or a terminal as proof, and before you write a verification skill's driving steps. |
 | Other `cursor-team-kit` skills, such as `/deslop` | Follow `<skills>/<name>/SKILL.md` when it exists. Otherwise skip with the line. |
 | `create-skill` (Cursor's built-in for authoring SKILL.md files) | The session's own skill-authoring skill when it has one. Otherwise follow the step's own rules and pstack's Authoring a skill playbook alone. |
-| Custom Modes, Option+Enter, the Agents Window, Plan Mode | T3 has no mode toggle. Start each new task with `/poteto-mode`. T3's plan interaction mode can stand in for Plan Mode. |
+| Custom Modes, Option+Enter, the Agents Window, Plan Mode | T3 Code has no mode toggle. Start of a run says how the mode holds. T3's plan interaction mode can stand in for Plan Mode. |
 | Cursor's built-in babysit skill, or any other Cursor built-in a step warns you away from | Nothing to avoid. Follow the pstack step. |
 
 ## Any other Cursor name

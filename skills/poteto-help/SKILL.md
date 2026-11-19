@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Poteto help
 
-In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) once per session before you follow this skill. It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](../pstack-t3/child.md) in its place.
+In T3 Code, read [the T3 Code adapter](../pstack-t3/SKILL.md) in full before you follow this skill, once per session and again after a compaction. It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](../pstack-t3/child.md) in its place.
 
 Answer the user's question about pstack, hand them a prompt they can send, and link the file the answer came from. For a help question, don't start the work. The user asked how, and a pstack run spends real tokens, so let them send the prompt.
 

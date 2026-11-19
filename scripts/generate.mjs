@@ -25,6 +25,23 @@ const HARNESS = "pstack-t3";
 // The short adapter a delegated child reads in place of the full one. Every child pays for it, so it has a word budget.
 const CHILD = `${EXTRAS}/child.md`;
 const CHILD_WORD_BUDGET = 500;
+// Every top-level run reads the adapter before its playbook. A row that one kind of step needs goes in a part instead.
+const ADAPTER_WORD_BUDGET = 1900;
+// T3 Code's tool names, as a live T3 thread lists them. AGENTS.md says how to refresh the file.
+const T3_TOOLS_PATH = join(ROOT, "t3-tools.json");
+// Snake-case names the adapter may use that are Cursor fields or T3 field values, not T3 tools.
+const NOT_TOOLS = new Set([
+  "subagent_type",
+  "run_in_background",
+  "is_background",
+  "cloud_base_branch",
+  "file_attachments",
+  "update_state",
+  "fixed_time",
+  "waiting_for_children",
+]);
+// Codex ignores `disable-model-invocation`. This file is its switch for the same thing.
+const CODEX_POLICY = "agents/openai.yaml";
 const COMMAND = "node scripts/generate.mjs";
 // What a bump writes for the person who reviews it. The sync workflow puts it in the PR body.
 const REVIEW_PATH = join(ROOT, ".cache", "bump-review.md");
@@ -37,8 +54,10 @@ function rewriteLinks(text, rewrite) {
   );
 }
 
-// Each key must appear verbatim in the first cell of an adapter row, or in a heading. A skill whose text matches any pattern gets the adapter line.
+// Each key must appear verbatim in the first cell of a table row, or in a heading, of the adapter or of a part it links to.
+// A skill whose text matches any pattern gets the adapter line.
 const TERMS = [
+  { key: "Your first message on a task", re: /first message on a task/i },
   { key: "`Task`", re: /`Task`|\bTask (tool|subagent|call|spawn)/ },
   { key: "subagent_type", re: /subagent_type/ },
   { key: "`AskQuestion`", re: /AskQuestion/ },
@@ -75,6 +94,8 @@ const TERMS = [
   { key: "Cursor Automations", re: /Cursor [Aa]utomation|cursor\.(sh|com)\/automations|update_state|SendToUser|scheduled automation|automation pack/ },
   { key: "cloud agent", re: /[Cc]loud[- ][Aa]gent|cloud VM|Cursor dashboard/ },
   { key: "built-in PR tool", re: /built-in PR tool/ },
+  { key: "scripts/watch-pr", re: /scripts\/watch-pr/ },
+  { key: "/visualize", re: /\/visualize\b/ },
   { key: "control-ui", re: /control-(ui|cli)/ },
   { key: "cursor-team-kit", re: /cursor-team-kit|`deslop`|\/deslop/ },
   { key: "create-skill", re: /\bcreate-skill\b/ },
@@ -212,14 +233,51 @@ const skills = readdirSync(join(SOURCE, "skills")).filter((name) => existsSync(j
 const adapter = readFileSync(ADAPTER_SOURCE, "utf8");
 const problems = [];
 
+const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
+
 if (skills.includes(HARNESS)) problems.push(`pstack now ships a skill named ${HARNESS}. Rename the harness folder.`);
 
 if (!existsSync(join(ROOT, CHILD))) {
   problems.push(`${CHILD} is missing. Every skill's adapter line links to it.`);
 } else {
-  const words = readFileSync(join(ROOT, CHILD), "utf8").split(/\s+/).filter(Boolean).length;
+  const words = wordsIn(readFileSync(join(ROOT, CHILD), "utf8"));
   if (words > CHILD_WORD_BUDGET) problems.push(`${CHILD} has ${words} words, over its budget of ${CHILD_WORD_BUDGET}. Every delegated child reads it.`);
 }
+if (wordsIn(adapter) > ADAPTER_WORD_BUDGET) {
+  problems.push(`${ADAPTER} has ${wordsIn(adapter)} words, over its budget of ${ADAPTER_WORD_BUDGET}. Move a row that one kind of step needs into a part in ${EXTRAS}/.`);
+}
+
+// The adapter's read-on-demand parts, at any depth. A thread finds a part through the adapter or through another part,
+// so one that neither links to is never read.
+const parts = new Map();
+if (existsSync(EXTRAS_SOURCE)) {
+  for (const file of walk(EXTRAS_SOURCE).filter((file) => file.endsWith(".md"))) {
+    const path = relative(ROOT, file);
+    if (path !== CHILD) parts.set(path, readFileSync(file, "utf8"));
+  }
+}
+for (const path of parts.keys()) {
+  const linked = [[ADAPTER, adapter], ...parts].some(([from, text]) => from !== path && text.includes(`](${posix.relative(posix.dirname(from), path)})`));
+  if (!linked) problems.push(`${path} is not linked from the adapter or from another part, so no thread reads it`);
+}
+
+// Every T3 tool the hand-written files name must be one T3 Code has. A renamed or merged tool fails here once t3-tools.json is refreshed.
+// A name counts with or without backticks, and with or without a server prefix such as `mcp__t3-code__`.
+const t3Tools = new Set(JSON.parse(readFileSync(T3_TOOLS_PATH, "utf8")).tools);
+const handWritten = [[ADAPTER, adapter], ...parts];
+if (existsSync(join(ROOT, CHILD))) handWritten.push([CHILD, readFileSync(join(ROOT, CHILD), "utf8")]);
+for (const [path, text] of handWritten) {
+  const unknown = new Set();
+  const plain = text.replace(/mcp__[a-z0-9-]+__/g, "");
+  for (const [name] of plain.matchAll(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g)) {
+    if (!t3Tools.has(name) && !NOT_TOOLS.has(name)) unknown.add(name);
+  }
+  for (const [, prefix] of plain.matchAll(/\b([a-z][a-z0-9]*)_\*/g)) {
+    if (![...t3Tools].some((tool) => tool.startsWith(`${prefix}_`))) unknown.add(`${prefix}_*`);
+  }
+  for (const name of unknown) problems.push(`${path} names \`${name}\`, which t3-tools.json does not list. Fix the name, or refresh the list.`);
+}
+
 
 // A skill that names another skill without linking it needs the adapter's row for running one.
 const ROUTE_KEY = "Run another pstack skill";
@@ -252,7 +310,8 @@ for (const path of walk(join(SOURCE, "agents")).filter((path) => path.endsWith("
 }
 
 // A row is a table line's first cell or a heading. A key that only appears in passing prose does not count.
-const rows = [...adapter.matchAll(/^\|([^|]*)\||^#+ (.*)$/gm)].map(([, cell, heading]) => (cell ?? heading).trim());
+const rowsOf = (text) => [...text.matchAll(/^\|([^|]*)\||^#+ (.*)$/gm)].map(([, cell, heading]) => (cell ?? heading).trim());
+const rows = [adapter, ...parts.values()].flatMap(rowsOf);
 const users = new Map();
 for (const [path, used] of usage) for (const key of used) users.set(key, [...(users.get(key) ?? []), path]);
 for (const [key, using] of users) {
@@ -278,7 +337,7 @@ function adapterLine(from) {
   const href = posix.relative(posix.dirname(from), ADAPTER);
   const child = posix.relative(posix.dirname(from), CHILD);
   return (
-    `In T3 Code, read [the T3 Code adapter](${href}) once per session before you follow this skill. ` +
+    `In T3 Code, read [the T3 Code adapter](${href}) in full before you follow this skill, once per session and again after a compaction. ` +
     `It maps the Cursor names in pstack to T3 Code. A delegated child reads [the child adapter](${child}) in its place.`
   );
 }
@@ -305,6 +364,7 @@ function render() {
   });
 
   let wrapped = 0;
+  let hidden = 0;
   for (const [path, used] of usage) {
     // Agent briefs are pasted into a child's task, where a relative link means nothing. The adapter's row covers them.
     if (used.size === 0 || path.startsWith("agents/")) continue;
@@ -345,14 +405,28 @@ function render() {
     }
     tree.set(at, entry);
   }
+  // Cursor and Claude Code keep a skill with `disable-model-invocation` out of the model's context. Codex ignores the flag,
+  // lists the skill in every thread, and may run it unasked. This file is Codex's switch for the same thing.
+  const policy = (skill) =>
+    `# Generated by ${COMMAND}. Codex ignores disable-model-invocation, so this keeps the skill out of its context. $${skill} still runs it.\npolicy:\n  allow_implicit_invocation: false\n`;
+  for (const [at, entry] of [...tree]) {
+    const skill = at.match(/^([^/]+)\/SKILL\.md$/)?.[1];
+    if (!skill || !/^disable-model-invocation:\s*true\s*$/m.test(entry.bytes.toString("utf8").match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "")) continue;
+    if (tree.has(`${skill}/${CODEX_POLICY}`)) {
+      problems.push(`pstack now ships skills/${skill}/${CODEX_POLICY}. Merge the policy into it by hand.`);
+      continue;
+    }
+    tree.set(`${skill}/${CODEX_POLICY}`, { bytes: Buffer.from(policy(skill)), executable: false });
+    hidden += 1;
+  }
   tree.set(
     `${HARNESS}/pstack.json`,
     { bytes: Buffer.from(`${JSON.stringify({ version, commit: option("--source") ? null : lock.commit, repository: lock.repository }, null, 2)}\n`), executable: false },
   );
-  return { tree, wrapped };
+  return { tree, wrapped, hidden };
 }
 
-const { tree, wrapped } = render();
+const { tree, wrapped, hidden } = render();
 
 for (const link of broken) problems.push(link);
 
@@ -385,5 +459,5 @@ if (flag("--check")) {
     writeFileSync(join(OUT, path), bytes);
     chmodSync(join(OUT, path), executable ? 0o755 : 0o644);
   }
-  console.log(`pstack ${version}: ${skills.length} skills, ${wrapped} files with the adapter line, written to skills/`);
+  console.log(`pstack ${version}: ${skills.length} skills, ${wrapped} files with the adapter line, ${hidden} kept out of Codex's context, written to skills/`);
 }
