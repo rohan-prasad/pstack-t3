@@ -1,12 +1,13 @@
 # pstack in T3 Code, for a delegated child
 
-You are a `delegate_task` child in T3 Code. pstack skills use Cursor names. Map them with this file. A skill's first line tells you to read the T3 Code adapter. For a child, this file is that read. `<skills>` means the folder that holds this file's folder.
+You are a `delegate_task` child in T3 Code. pstack skills use Cursor names, and this file maps them. A skill's first line says to read the T3 Code adapter. For a child, this file is that read. `<skills>` is the folder that holds this file's folder.
 
-Read the full adapter, `SKILL.md` beside this file, only before you do one of these: spawn a subagent, pick a model, schedule a wake, read another thread, or follow `setup-pstack` or `make-bot-ui`.
+Spawn only when your task says you may. When a step says to spawn and your task does not, do that step's work yourself, and say so in your report. The files named here sit beside this one. Read `spawning.md` before you spawn and `paths.md` before you read another thread. For anything else, read the full adapter, `SKILL.md`. Return a `setup-pstack` step to your parent, because it runs in the operator's thread.
 
 | Cursor | T3 Code |
 | --- | --- |
-| `AskQuestion` | You cannot reach the operator. Decide, and name the assumption in your report. When only the operator can decide, return with the question. |
+| Your first message on a task | Skip pstack's opening. Open your report with the goal. |
+| `AskQuestion` | Do not ask. Decide, and name the assumption in your report. When only the operator can decide, return with the question. |
 | Open a todolist | The session's todo or plan tool, or a list in your reply. |
 | Run another pstack skill (`/name` or "the **name** skill") | Read `<skills>/<name>/SKILL.md` and follow it. |
 | `Read`, `Grep`, `Glob` | The session's file and search tools, or `cat` and `rg` in the shell. |
@@ -16,9 +17,9 @@ Read the full adapter, `SKILL.md` beside this file, only before you do one of th
 | `.cursor/rules/*.mdc`, always-applied rules | The repo's `AGENTS.md`, or `CLAUDE.md` when the repo keeps its rules there. |
 | The current agent's store | `~/.agents/pstack-store/<repo-slug>/`. Create it. The Project store is `projects/<project-slug>/` inside it. Read it, and leave writing it to the coordinator. |
 | `pstack/skills/<path>`, `git show origin/main:pstack/skills/<path>`, a `github.com/cursor/plugins` URL under `pstack/` | The local copy in `<skills>`, read with `cat`. Never fetch it. |
-| A built-in PR tool | The forge command the step gives, such as `gh pr create`, then `link_pull_request`. A child cannot call `watch_pull_request`. Use the step's `scripts/watch-pr` for status. When you must wait, return with the PR URL and what you wait for. |
-| `control-ui`, `control-cli` | Browser and web UIs: the `preview_*` tools. Simulators: the `device_*` tools. CLIs and TUIs: the shell, with the output as evidence. |
-| `/loop`, Cursor Automations, transcripts | Read the full adapter first. |
-| Bugbot, cloud agents, Custom Modes, any other Cursor name | Put one line in your report, `Skipped in T3 Code: <step>. <reason>.`, then go on to the next step. |
+| A built-in PR tool | The forge command the step gives, such as `gh pr create`. Then link every PR you open, take over, or push to with `link_pull_request`, and say so if that fails. Never call `watch_pull_request`. Run `scripts/watch-pr` only with `--status-only`. After any PR work, your last line is `PR <full URL>, head <SHA>, checks and reviews <state>`. |
+| `control-ui`, `control-cli` | Read `proof.md` first. Use the browser only when your brief asks for it. |
+| `/loop`, Cursor Automations | Read `waking.md` first. |
+| Bugbot, cloud agents, Custom Modes, any other Cursor name | Put one line in your report, `Skipped in T3 Code: <step>. <reason>.`, then go on. |
 
-Your parent reads your last message. Put the whole report there: what you ran, its output, what you changed, and what you skipped.
+Your parent reads your last message, so put the whole report there: what you ran, its output, what you changed, and what you skipped.

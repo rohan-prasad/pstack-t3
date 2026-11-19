@@ -15,3 +15,5 @@ jobs:
           node-version: 22
       - run: node scripts/generate.mjs --check
       - run: bash -n install.sh
+      - run: for script in scripts/*.mjs; do node --check "$script"; done
+      - run: node --test scripts/transcript.test.mjs
