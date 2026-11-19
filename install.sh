@@ -8,11 +8,15 @@
 #   ./install.sh                       link skills for every project
 #   ./install.sh --project /path/repo  link skills into that repo's .agents/skills and .claude/skills
 #   ./install.sh --force               also replace links that point at another checkout or skill pack
+#   ./install.sh --hooks               also add the Claude Code hook that brings poteto-mode back after a compaction
+#   ./install.sh --remove-hooks        take that hook out of Claude Code's settings again, and link nothing
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT=""
 FORCE=0
+HOOKS=""
+USAGE='usage: ./install.sh [--project /path/to/repo] [--force] [--hooks | --remove-hooks]'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -24,12 +28,36 @@ while [[ $# -gt 0 ]]; do
       FORCE=1
       shift
       ;;
+    --hooks)
+      HOOKS=install
+      shift
+      ;;
+    --remove-hooks)
+      HOOKS=remove
+      shift
+      ;;
     *)
-      printf 'unknown option %s\nusage: ./install.sh [--project /path/to/repo] [--force]\n' "$1" >&2
+      printf 'unknown option %s\n%s\n' "$1" "$USAGE" >&2
       exit 2
       ;;
   esac
 done
+
+# The hook lives in Claude Code's own settings, which cover every project.
+if [[ -n "$HOOKS" && -n "$PROJECT" ]]; then
+  printf -- '--hooks and --remove-hooks change your Claude Code settings, not a project. Run them without --project.\n%s\n' "$USAGE" >&2
+  exit 2
+fi
+if [[ -n "$HOOKS" ]] && ! command -v node >/dev/null 2>&1; then
+  printf 'the hook runs on Node, and node is not on PATH\n' >&2
+  exit 1
+fi
+
+# Removing the hook is its own job. It links no skills and creates no settings file.
+if [[ "$HOOKS" == remove ]]; then
+  node "$ROOT/scripts/pstack-compaction-hook.mjs" --remove "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  exit 0
+fi
 
 if [[ -n "$PROJECT" ]]; then
   TARGETS=("$PROJECT/.agents/skills" "$PROJECT/.claude/skills")
@@ -100,5 +128,13 @@ done
 
 if [[ "$total_skipped" -gt 0 ]]; then
   printf 'pstack is incomplete until every skill is linked. Skills call each other by name.\n'
+fi
+
+if [[ "$HOOKS" == install ]]; then
+  if [[ ! -d "$CLAUDE_HOME" ]]; then
+    printf 'no %s, so there is no Claude Code to add the hook to. The skills are linked, and the hook is not installed.\n' "$CLAUDE_HOME" >&2
+    exit 1
+  fi
+  node "$ROOT/scripts/pstack-compaction-hook.mjs" --install "$CLAUDE_HOME/settings.json"
 fi
 printf 'In T3 Code, restart the agent session or start a new thread, then type $ or / to find the skills.\n'
