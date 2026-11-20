@@ -71,7 +71,7 @@ The hook needs Node. It goes in `~/.claude/settings.json`, so it covers every Cl
 
 pstack runs every subagent in the background, on the model its role names in `~/.agents/pstack-models.md`. In T3 Code that is a `delegate_task` child. T3 Code also tells a Claude thread to use Claude Code's own `Agent` tool for a foreground child on its own model. In 4 of 9 poteto-mode threads audited on 20 Nov 2026, the Feature playbook's code-writing step took that path. The code then ran on the parent's model, in the foreground, with no pstack brief. Those four threads never read the spawning part or the model file. The three that read both spawned correctly.
 
-The adapter now maps a step that delegates in plain words, as Feature's does, to `delegate_task`, and the opening names each delegating step's model. `./install.sh --hooks` adds a second hook that makes this certain for Claude threads. Claude Code runs it before its own subagent tool. In a poteto-mode thread or a pstack delegate, it refuses the call and names `delegate_task`, the spawning part, and the model file. Elsewhere it does nothing, so T3 Code's own rule holds outside the mode. Codex, Grok, and Pi threads have no such hook and rely on the adapter.
+The adapter now maps a step that delegates in plain words, as Feature's does, to `delegate_task`, and the opening names each delegating step's model. `./install.sh --hooks` adds a second hook that makes this certain for Claude threads. Claude Code runs it before its own subagent tool. It acts only in a session that T3 Code started, because outside T3 Code that tool is how pstack spawns. In a poteto-mode thread or a pstack delegate there, it refuses the call and names `delegate_task`, the spawning part, and the model file. It lets the call through while you run a skill from outside pstack, and for the `web-fetch` helper that stands in for a missing WebFetch tool. Elsewhere it does nothing, so T3 Code's own rule holds outside the mode. Only your own message turns the mode on or off, so a PR wake or a summary that quotes `drop poteto-mode` does not. Codex, Grok, and Pi threads have no such hook and rely on the adapter.
 
 ## T3 Code's own rules
 
@@ -84,13 +84,13 @@ Two choices are yours, and `/setup-pstack` asks for both. It writes them to `~/.
 
 Browser proof needs T3's browser. A Linux host that blocks Chrome's sandbox, such as Ubuntu 23.10 or later, stops it from starting. T3 Code then names a one-time `t3 browser setup` command to run with `sudo`. A thread asks for the password through T3 Code's own prompt, and reports the screen as not proven if you decline.
 
-pstack stays out of threads that did not ask for it. Claude Code and Cursor keep a skill marked `disable-model-invocation` out of the model's context. Codex ignores that flag, so the generator writes an `agents/openai.yaml` beside each such skill. A Codex thread then lists one pstack skill, `setup-pstack`, in place of 59, and `$poteto-mode` still runs. In a Codex thread, type the command with `$`. Codex loads a skill from `$name` alone, and it can no longer find one of these skills in its list.
+pstack stays out of threads that did not ask for it. Claude Code and Cursor keep a skill marked `disable-model-invocation` out of the model's context. Codex ignores that flag, so the generator writes an `agents/openai.yaml` beside each such skill. A Codex thread then lists one pstack skill, `setup-pstack`, in place of 60, and `$poteto-mode` still runs. In a Codex thread, type the command with `$`. Codex loads a skill from `$name` alone, and it can no longer find one of these skills in its list.
 
 ## Token cost
 
 A thread reads the adapter before its playbook, so the adapter stays short. It holds about 1,890 words, down from 2,900. The rows that one kind of step needs are separate files that a thread reads only when it gets there: [spawning and models](docs/harness/t3-code/spawning.md), [proof](docs/harness/t3-code/proof.md), [paths](docs/harness/t3-code/paths.md), [waking and scheduling](docs/harness/t3-code/waking.md), `setup-pstack`, and `make-bot-ui`. A task that spawns reads the spawning part too, about 2,250 words, so it reads more than before. A task that does not spawn reads less.
 
-A delegated child reads [`child.md`](docs/harness/t3-code/child.md), under 500 words, in place of the adapter. The generator fails when the adapter passes 1,900 words or `child.md` passes 500.
+A delegated child reads [`child.md`](docs/harness/t3-code/child.md), under 500 words, in place of the adapter. The generator fails when the installed adapter, frontmatter included, passes 1,900 words, or `child.md` passes 500.
 
 ## How it works
 
