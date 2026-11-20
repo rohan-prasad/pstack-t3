@@ -10,15 +10,15 @@ disable-model-invocation: true
 
 pstack skills use Cursor names. In T3 Code, read this file once per session, then map each Cursor name in a skill with the tables below. Read it again whenever these tables are not in your context, such as after a compaction. `<skills>` is the folder that holds `poteto-mode/` and this file's folder, usually `~/.agents/skills/`, or `~/.claude/skills/` in a Claude thread. If a Cursor field has no row, drop it and say so. Never pass a field or value the tool schema rejects.
 
-T3 Code runs many providers. These rows hold in every T3 thread, whichever provider runs it, except where a row names a provider. A session may list a T3 tool with a prefix, such as `mcp__t3-code__delegate_task`, or defer it until you load it with the session's tool search. It is the same tool.
+These rows hold in every T3 thread, whichever provider runs it, except where a row names a provider. A session may list a T3 tool with a prefix, such as `mcp__t3-code__delegate_task`, or defer it until you load it with the session's tool search. It is the same tool.
 
-The pstack guide and README in this tree describe Cursor and Claude Code. Read their steps through this file too.
+Read the steps in this tree's pstack guide and README, which describe Cursor and Claude Code, through this file too.
 
 ## T3 Code's own rules
 
 T3 Code gives every thread its own rules for subagents, pull requests, browser previews, and waiting. Each row here maps a pstack step onto those rules, so a thread that follows the row follows both. A T3 Code rule decides how a step runs. It is not a reason to drop the step. When T3 Code forbids the only way to run a step, skip the step with the line under Cursor-only features.
 
-By T3 Code's default, an ordinary coding task needs no T3 tools. A task the operator starts with `/poteto-mode` is not ordinary. A playbook step that delegates, proves, or reviews still runs when the change looks small.
+By T3 Code's default, an ordinary coding task needs no T3 tools. A task the operator starts with `/poteto-mode` is not ordinary. A playbook step that delegates, proves, or reviews still runs when the change looks small. So `/no-comments` spawns Comment Sicko on every diff, even one with no comments, because it also judges workaround code.
 
 Two choices belong to the operator, as lines that `/setup-pstack` writes in `~/.agents/pstack-models.md`. `# browser proof` lets a poteto-mode task use the browser unasked. `# when a model cannot run` says to ask, switch models, or stop. A row never makes either choice. With no line, T3 Code's own rule holds.
 

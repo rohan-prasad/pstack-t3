@@ -14,7 +14,8 @@
 // A file counts as read only when a tool call read it: the Read tool, or `cat`, `sed`, `head`, and the like in the
 // shell. A path that a call only names, such as one in a child's brief, does not count. "part" means every read of
 // the file was cut, for example by `head` or a line range. "held" means the thread read the whole adapter in an
-// earlier task and no compaction came between. An opening counts when `send_to_user` carried a checklist.
+// earlier task and no compaction came between. An opening counts when `send_to_user` carried a checklist. A task that
+// ran `gh pr create` shows whether it spawned Comment Sicko before that, as `/no-comments` asks of every diff.
 // It prints dates and counts only, never prompt text. Codex, Pi, and Grok threads keep their own transcripts and are
 // not read. The transcript format is Claude Code's own, so a count of zero means "check the format", not "no tasks".
 
@@ -36,6 +37,11 @@ const PRINCIPLE = /principle-[^/\s]*\/SKILL\.md$/;
 const SKILL_TEXT = /pstack-t3\/(SKILL|child)\.md$|poteto-mode\/SKILL\.md$|playbooks\/[a-z-]+\.md$/;
 const SPAWN = (name) => name.endsWith("delegate_task") || name === "Agent" || name === "Task";
 const NATIVE = (name) => name === "Agent" || name === "Task";
+const SICKO_BODY_HEADING = /^# Comment Sicko\s*$/m;
+const SICKO_TYPE = /(?:^|:)comment-sicko$/;
+const briefsSicko = (call) => call.name.endsWith("delegate_task") && SICKO_BODY_HEADING.test(call.input.task ?? "");
+const typesSicko = (call) => NATIVE(call.name) && SICKO_TYPE.test(call.input.subagent_type ?? "");
+const opensPr = (call) => call.name === "Bash" && /\bgh pr create\b/.test(call.input.command ?? "");
 // The reason pstack's hook gives when it refuses Claude Code's own subagent tool.
 const REFUSAL = /\bpstack:/;
 const EDIT = new Set(["Edit", "Write", "NotebookEdit"]);
@@ -93,6 +99,8 @@ function measure(task, refused) {
   const firstWork = calls.findIndex((call) => (SPAWN(call.name) && !refused.has(call.id)) || EDIT.has(call.name));
   const opening = calls.findIndex((call) => call.name.endsWith("send_to_user") && isChecklist(call.input.message));
   const adapter = state(ADAPTER);
+  const pr = calls.findIndex(opensPr);
+  const sickoBefore = (end) => calls.slice(0, end).some((call) => (briefsSicko(call) || typesSicko(call)) && !refused.has(call.id));
   return {
     tools: calls.length,
     adapter: adapter === "full" || !task.held ? adapter : "held",
@@ -105,6 +113,7 @@ function measure(task, refused) {
     delegated: calls.filter((call) => call.name.endsWith("delegate_task")).length,
     native: calls.filter((call) => NATIVE(call.name) && !refused.has(call.id)).length,
     refused: calls.filter((call) => NATIVE(call.name) && refused.has(call.id)).length,
+    sicko: pr === -1 ? undefined : sickoBefore(pr) ? "spawned" : "skipped",
   };
 }
 
@@ -148,7 +157,7 @@ if (rows.length === 0) {
 }
 
 const mark = (value) => (value ? "yes" : "-");
-console.log("started           project          model       start   tools adapter playbook principle opening   spawns(t3/own)");
+console.log("started           project          model       start   tools adapter playbook principle opening   spawns(t3/own) sicko");
 for (const row of rows) {
   console.log(
     [
@@ -161,7 +170,8 @@ for (const row of rows) {
       row.playbook.padEnd(8),
       mark(row.principle).padEnd(9),
       (row.opening === undefined ? "-" : `call ${row.opening}`).padEnd(9),
-      `${row.delegated}/${row.native}`,
+      `${row.delegated}/${row.native}`.padEnd(14),
+      row.sicko ?? "-",
     ].join(" "),
   );
 }
@@ -179,6 +189,7 @@ const report = (title, group) => {
   console.log(`  used a todo tool                          ${share((row) => row.todo)}`);
   console.log(`  spawned with delegate_task                ${share((row) => row.delegated > 0)}`);
   console.log(`  spawned with the provider's own tool      ${share((row) => row.native > 0)}, and the hook refused one in ${count((row) => row.refused > 0)}`);
+  console.log(`  ran gh pr create                          ${share((row) => row.sicko !== undefined)}, with no Comment Sicko spawn before it in ${count((row) => row.sicko === "skipped")}`);
 };
 report("tasks that started with the command", rows.filter((row) => row.invoked));
 report("tasks that came later while the mode held", rows.filter((row) => !row.invoked));

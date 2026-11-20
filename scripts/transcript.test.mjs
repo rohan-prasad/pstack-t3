@@ -358,3 +358,29 @@ test("the adherence report counts a native spawn the hook refused apart", () => 
   const [task] = JSON.parse(execFileSync(process.execPath, [ADHERENCE, "--dir", root, "--json"], { encoding: "utf8" })).tasks;
   assert.deepEqual([task.native, task.refused], [1, 1]);
 });
+
+test("the adherence report shows whether Comment Sicko was spawned before gh pr create", () => {
+  const root = scratch();
+  const SICKO = "---\nname: comment-sicko\n---\n\n# Comment Sicko\n\nYes... Ha ha ha... Yes!\n\nRead /s/pstack-t3/child.md first. Scope: the diff against main.";
+  const pr = bash("git push -u origin x && gh pr create --repo o/r --base main --title t --body-file b.md");
+  const agent = (id, input) => JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name: "Agent", input }] } });
+  const refusal = JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "agent-1", is_error: true, content: "pstack: poteto-mode is on" }] } });
+  const tasks = {
+    "t3-brief": [call("mcp__t3-code__delegate_task", { task: SICKO }), pr],
+    "native-type": [agent("agent-2", { subagent_type: "pstack:comment-sicko", prompt: "the diff" }), pr],
+    "path-only": [call("mcp__t3-code__delegate_task", { task: "Act as /s/pstack-t3/agents/comment-sicko.md on the diff." }), pr],
+    refused: [agent("agent-1", { subagent_type: "comment-sicko", prompt: "the diff" }), refusal, pr],
+    "after-pr": [pr, call("mcp__t3-code__delegate_task", { task: SICKO })],
+    "no-pr": [call("mcp__t3-code__delegate_task", { task: "implement it" })],
+  };
+  for (const [name, lines] of Object.entries(tasks)) transcript(root, [user(INVOKE), ...lines, bash("ls"), bash("ls"), bash("ls"), bash("ls")], `${name}/session.jsonl`);
+  const rows = JSON.parse(execFileSync(process.execPath, [ADHERENCE, "--dir", root, "--json"], { encoding: "utf8" })).tasks;
+  assert.deepEqual(Object.fromEntries(rows.map((row) => [row.project, row.sicko ?? null])), {
+    "t3-brief": "spawned",
+    "native-type": "spawned",
+    "path-only": "skipped",
+    refused: "skipped",
+    "after-pr": "skipped",
+    "no-pr": null,
+  });
+});
