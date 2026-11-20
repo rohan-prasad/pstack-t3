@@ -1,6 +1,6 @@
 # p3-stack contributor guide
 
-p3-stack is pstack, unchanged, plus one adapter that maps its Cursor names to T3 Code. Read [README.md](README.md) for the layout.
+p3-stack is pstack, unchanged, plus one adapter that maps its Cursor names to T3 Code, and `deslop`, the one `cursor-team-kit` skill that pstack runs by name. Read [README.md](README.md) for the layout.
 
 ## Rules
 
@@ -10,11 +10,12 @@ p3-stack is pstack, unchanged, plus one adapter that maps its Cursor names to T3
 - A row never tells a thread to break a rule that T3 Code gives it. Map the pstack step onto the T3 rule. The T3 rule decides how the step runs, and the row keeps the step from being dropped.
 - A row never grants what only the operator can. Where T3 Code says "only when asked", the answer is a line in `~/.agents/pstack-models.md` that `/setup-pstack` writes, such as `# browser proof`. The row reads that line, and with no line it follows T3 Code's rule.
 - `TERMS` in `scripts/generate.mjs` lists the Cursor names the generator looks for. Each `key` must appear verbatim in the first cell of a table row, or in a heading, of the adapter or of a part it links to. When pstack starts using a new Cursor feature, add its term and its row together.
-- Every top-level run reads the adapter before its playbook, so the generator holds it to 1,900 words. A part of the adapter that only one skill or one kind of step needs lives in its own file in `docs/harness/t3-code/`, such as `spawning.md`, `paths.md`, and `waking.md`. The adapter links to each part from the row or heading that says when to read it, and the generator fails on a part with no link.
+- Every top-level run reads the adapter before its playbook, so the generator holds the installed adapter, frontmatter included, to 1,900 words. A part of the adapter that only one skill or one kind of step needs lives in its own file in `docs/harness/t3-code/`, such as `spawning.md`, `paths.md`, and `waking.md`. The adapter links to each part from the row or heading that says when to read it, and the generator fails on a part with no link.
 - `docs/harness/t3-code/child.md` is the adapter for a delegated child. Every child reads it, so the generator holds it to 500 words. Put a row there only when a child that spawns nothing needs it. A row there never says more than the adapter's row.
+- `TEAM_KIT_SKILLS` in `scripts/generate.mjs` lists the `cursor-team-kit` skills the tree ships, from the same pinned commit. Add one only when a pstack step runs it by name and it names no Cursor tool. The generator copies it unchanged, except that it adds `disable-model-invocation: true`, and fails when upstream moves it.
 - After any change, run `node scripts/generate.mjs` and commit `skills/` with it. CI runs `node scripts/generate.mjs --check`.
 
-- `scripts/pstack-compaction-hook.mjs` is the Claude Code hook that `./install.sh --hooks` registers. It finds a mode thread by the `/poteto-mode` command in the transcript, and a delegate by the child adapter's path in its brief. Keep its output short, because Claude Code adds it to the thread's context after every compaction.
+- `scripts/pstack-compaction-hook.mjs` holds the two Claude Code hooks that `./install.sh --hooks` registers. After a compaction it names the files to read again. Before Claude Code's own subagent tool it refuses the call, because every poteto-mode subagent is a `delegate_task` child, and it does so only in a session that T3 Code started. It finds a mode thread by the `/poteto-mode` command in the transcript, and a delegate by T3 Code's first line for a child together with the child adapter's path in its brief. Only an operator's own message turns the mode on or off. Keep its output short, because Claude Code adds it to the thread's context.
 - `scripts/transcript.mjs` holds what the hook and `scripts/adherence.mjs` know about Claude Code's transcript format. After a change to any of the three, run `node --test scripts/transcript.test.mjs`. CI runs it too.
 
 ## Updating the T3 tool list

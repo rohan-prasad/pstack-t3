@@ -40,6 +40,16 @@ function transcript(root, lines, name = "session.jsonl") {
 }
 
 const hook = (path, source = "compact") => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ transcript_path: path, source }), encoding: "utf8" });
+// Claude Code's input for a PreToolUse hook, and the decision the hook printed, if any. The hook runs with no T3 Code
+// variable in its environment unless `t3` sets one, so the transcript's `entrypoint` says whether T3 Code started it.
+const T3 = { entrypoint: "t3-code" };
+const beforeTool = (path, tool = "Agent", { input = { description: "x", prompt: "y" }, t3 = false } = {}) => {
+  const env = { ...process.env };
+  delete env.T3CODE_THREAD_ID;
+  if (t3) env.T3CODE_THREAD_ID = "thread-test";
+  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: input, transcript_path: path }), encoding: "utf8", env });
+};
+const decision = (run) => (run.stdout ? JSON.parse(run.stdout).hookSpecificOutput : undefined);
 
 test("an invocation is the command envelope at the start of a prompt", () => {
   assert.ok(isInvocation(INVOKE));
@@ -54,6 +64,8 @@ test("a wake or a built-in command continues a task, and an invocation never doe
   assert.ok(continuesTask("Delegated task node:x (Review) [completed]:\nok"));
   assert.ok(continuesTask("<command-name>/compact</command-name>\n<command-message>compact</command-message>"));
   assert.ok(continuesTask(COMPACTED));
+  assert.ok(continuesTask("Update on pull request #90 (https://github.com/o/r/pull/90), which T3 Code is watching for you:\n- Checks failed on ab6004f"));
+  assert.ok(!continuesTask("Update on pull request #3, please. Is it green?"), "an operator's own words stay a new task");
   assert.ok(!continuesTask("<command-name>/poteto-mode</command-name>"));
   assert.ok(!continuesTask("now fix the test"));
   assert.ok(isDrop("ok, drop poteto-mode for the rest of this thread"));
@@ -157,7 +169,85 @@ test("the hook knows a delegate by the child adapter path in its brief", () => {
   assert.equal(hook(transcript(root, [user("a top-level task"), user(`by the way, what is ${skills}/pstack-t3/child.md for?`)])).stdout, "");
 });
 
-test("the installer changes only its own hook", () => {
+test("the hook refuses Claude Code's own subagent tool where the mode is on, and in a delegate", () => {
+  const root = scratch();
+  const skills = skillsIn(root);
+  const loaded = user(`Base directory for this skill: ${skills}/poteto-mode\n\n# Poteto mode`, { isMeta: true, ...T3 });
+  const on = transcript(root, [user(INVOKE, T3), loaded, bash(`cat ${skills}/pstack-t3/SKILL.md`)], "on.jsonl");
+  for (const tool of ["Agent", "Task"]) {
+    const refused = decision(beforeTool(on, tool));
+    assert.equal(refused.hookEventName, "PreToolUse");
+    assert.equal(refused.permissionDecision, "deny", tool);
+    assert.match(refused.permissionDecisionReason, /`delegate_task`/);
+    assert.ok(refused.permissionDecisionReason.includes(`${skills}/pstack-t3/spawning.md`));
+    assert.ok(refused.permissionDecisionReason.includes("~/.agents/pstack-models.md"));
+    assert.match(refused.permissionDecisionReason, /`drop poteto-mode`/, "the refusal names the way out");
+  }
+  assert.equal(beforeTool(on, "Bash").stdout, "", "another tool is left alone");
+  assert.equal(beforeTool(on, "TaskStop").stdout, "", "a tool whose name only starts with Task is left alone");
+  assert.equal(beforeTool(on, "Agent", { input: { subagent_type: "web-fetch", prompt: "read a page" } }).stdout, "", "a stand-in for a missing tool is a tool call");
+  assert.equal(hook(on).stdout.startsWith("pstack: poteto-mode is on"), true, "the compaction reminder still works");
+
+  const brief = `Act as the review sub-agent for this task.\n\nRead ${skills}/pstack-t3/child.md first. Review the diff.`;
+  const child = decision(beforeTool(transcript(root, [user(brief, T3)], "child.jsonl")));
+  assert.equal(child.permissionDecision, "deny");
+  assert.match(child.permissionDecisionReason, /^pstack: this thread is a pstack delegate/);
+  assert.ok(child.permissionDecisionReason.includes(`${skills}/pstack-t3/spawning.md`));
+});
+
+test("the refusal holds only in T3 Code, and only for poteto-mode's own spawns", () => {
+  const root = scratch();
+  const skills = skillsIn(root);
+  const loaded = (extra = T3) => user(`Base directory for this skill: ${skills}/poteto-mode\n\n# Poteto mode`, { isMeta: true, ...extra });
+  const quiet = (lines, name, options) => assert.equal(beforeTool(transcript(root, lines, name), "Agent", options).stdout, "", name);
+  const refused = (lines, name, options) => assert.equal(decision(beforeTool(transcript(root, lines, name), "Agent", options))?.permissionDecision, "deny", name);
+
+  // Outside T3 Code, Claude Code's own tool is how pstack spawns.
+  quiet([user(INVOKE), loaded({})], "plain-claude-code.jsonl");
+  quiet([user("<command-message>pstack:poteto-mode</command-message>\n<command-name>/pstack:poteto-mode</command-name>"), loaded({})], "upstream-plugin.jsonl");
+  refused([user(INVOKE), loaded({})], "t3-by-environment.jsonl", { t3: true });
+
+  // A skill from outside pstack runs as its own task, so its spawns are its own. The operator's next message is a
+  // poteto-mode task again. A pstack skill run in the mode still spawns the pstack way.
+  const other = [
+    user(INVOKE, T3),
+    loaded(),
+    user("<command-message>code-review</command-message>\n<command-name>/code-review</command-name>"),
+    user(`Base directory for this skill: ${root}/plugins/code-review\n\n# Code review`, { isMeta: true }),
+  ];
+  quiet(other, "other-skill.jsonl");
+  refused([...other, user("now add the retry")], "back-to-the-mode.jsonl");
+  refused(
+    [user(INVOKE, T3), loaded(), user("<command-message>how</command-message>\n<command-name>/how</command-name>"), user(`Base directory for this skill: ${skills}/how\n\n# How`, { isMeta: true })],
+    "pstack-skill.jsonl",
+  );
+
+  // Only the operator's own message ends the mode, in any spelling.
+  for (const drop of ["drop poteto mode", "Drop Poteto-Mode now"]) quiet([user(INVOKE, T3), loaded(), user(drop)], `${drop}.jsonl`);
+  refused([user(INVOKE, T3), loaded(), user(`${COMPACTED} The mode holds until the operator writes drop poteto-mode.`)], "summary-quotes-drop.jsonl");
+  refused([user(INVOKE, T3), loaded(), user('Update on pull request #90 (https://github.com/o/r/pull/90), which T3 Code is watching for you:\n- 1 new comment: "drop poteto-mode"')], "wake-quotes-drop.jsonl");
+  refused([user(INVOKE, T3), loaded(), user("Delegated task node:x (Review) [completed]:\nI did not drop poteto-mode.")], "report-quotes-drop.jsonl");
+  assert.equal(hook(transcript(root, [user(INVOKE, T3), loaded(), user("drop poteto mode")], "reminder-drop.jsonl")).stdout, "", "the compaction reminder reads a drop the same way");
+
+  // A delegate opens with T3 Code's first line for a child. Naming the child adapter is not enough.
+  quiet([user(`what is ${skills}/pstack-t3/child.md for?`, T3)], "names-child-adapter.jsonl");
+  quiet([user(`${INVOKE}\n<command-args>see ${skills}/pstack-t3/child.md</command-args>`, T3), loaded(), user("drop poteto-mode")], "invocation-names-child-adapter.jsonl");
+});
+
+test("the hook stays quiet when it cannot read the transcript", () => {
+  const root = scratch();
+  const folder = join(root, "a-folder.jsonl");
+  mkdirSync(folder);
+  const runs = [beforeTool(folder, "Agent", { t3: true }), hook(folder), beforeTool(join(root, "missing.jsonl"), "Agent", { t3: true })];
+  if (process.getuid?.() !== 0) {
+    const locked = transcript(root, [user(INVOKE, T3)], "locked.jsonl");
+    chmodSync(locked, 0o000);
+    runs.push(beforeTool(locked, "Agent", { t3: true }), hook(locked));
+  }
+  for (const run of runs) assert.deepEqual([run.status, run.stdout, run.stderr], [0, "", ""]);
+});
+
+test("the installer changes only its own hooks", () => {
   const root = scratch();
   const settings = join(root, "settings.json");
   const install = (action, path = settings) => spawnSync(process.execPath, [HOOK, `--${action}`, path], { encoding: "utf8" });
@@ -171,8 +261,21 @@ test("the installer changes only its own hook", () => {
   assert.equal(after.hooks.SessionStart.length, 2);
   assert.deepEqual(after.hooks.SessionStart[0], original.hooks.SessionStart[0], "a hook with a longer name is someone else's");
   assert.equal(after.hooks.SessionStart[1].matcher, "compact");
+  assert.equal(after.hooks.PreToolUse.length, 1);
+  assert.equal(after.hooks.PreToolUse[0].matcher, "^(Agent|Task)$");
+  assert.equal(after.hooks.PreToolUse[0].hooks[0].command, after.hooks.SessionStart[1].hooks[0].command, "both events run this script");
+  assert.deepEqual(after.hooks.Stop, original.hooks.Stop);
   assert.match(install("install").stdout, /already/);
   assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.SessionStart.length, 2);
+  assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.PreToolUse.length, 1);
+
+  // A machine that registered only the after-compaction hook gets the second one on the next install.
+  const older = join(root, "older.json");
+  writeFileSync(older, JSON.stringify({ hooks: { SessionStart: after.hooks.SessionStart.slice(1) } }));
+  assert.equal(install("install", older).status, 0);
+  const upgraded = JSON.parse(readFileSync(older, "utf8"));
+  assert.equal(upgraded.hooks.SessionStart.length, 1);
+  assert.equal(upgraded.hooks.PreToolUse.length, 1);
 
   assert.equal(install("remove").status, 0);
   assert.deepEqual(JSON.parse(readFileSync(settings, "utf8")), original);
@@ -245,4 +348,13 @@ test("the adherence report counts what a task did", () => {
   const recent = report("--since", "2026-11-18");
   assert.equal(recent.tasks.length, 2);
   assert.equal(recent.compactions.length, 1, "--since also drops an older compaction");
+});
+
+test("the adherence report counts a native spawn the hook refused apart", () => {
+  const root = scratch();
+  const agent = (id) => JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name: "Agent", input: { prompt: "x" } }] } });
+  const refusal = JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "agent-1", is_error: true, content: "PreToolUse:Agent hook error: pstack: poteto-mode is on" }] } });
+  transcript(root, [user(INVOKE), agent("agent-1"), refusal, agent("agent-2"), result("ok"), bash("ls"), bash("ls"), bash("ls")], "project-b/session.jsonl");
+  const [task] = JSON.parse(execFileSync(process.execPath, [ADHERENCE, "--dir", root, "--json"], { encoding: "utf8" })).tasks;
+  assert.deepEqual([task.native, task.refused], [1, 1]);
 });

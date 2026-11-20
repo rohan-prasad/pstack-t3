@@ -4,10 +4,11 @@
 //   node scripts/generate.mjs                 regenerate skills/
 //   node scripts/generate.mjs --check         fail if skills/ is out of date
 //   node scripts/generate.mjs --bump [ref]    pin pstack to ref (default main), then regenerate
-//   node scripts/generate.mjs --source DIR    use a local pstack/ folder instead of the pin
+//   node scripts/generate.mjs --source DIR    use a local pstack/ folder instead of the pin. deslop comes from the
+//                                             cursor-team-kit/ folder beside it, or from the pin when there is none
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,7 +30,7 @@ const CHILD_WORD_BUDGET = 500;
 const ADAPTER_WORD_BUDGET = 1900;
 // T3 Code's tool names, as a live T3 thread lists them. AGENTS.md says how to refresh the file.
 const T3_TOOLS_PATH = join(ROOT, "t3-tools.json");
-// Snake-case names the adapter may use that are Cursor fields or T3 field values, not T3 tools.
+// Snake-case names the adapter may use that are Cursor fields, T3 field values, or a provider's own tool, not T3 tools.
 const NOT_TOOLS = new Set([
   "subagent_type",
   "run_in_background",
@@ -39,7 +40,14 @@ const NOT_TOOLS = new Set([
   "update_state",
   "fixed_time",
   "waiting_for_children",
+  "spawn_agent",
 ]);
+// pstack runs `/deslop` from Cursor's `cursor-team-kit` plugin before every commit, and its README says to install that
+// plugin beside pstack. The plugin sits beside pstack in the same repository, so the tree ships each skill listed here
+// from the pinned commit. List only a skill that a pstack step runs by name. `control-ui` and `control-cli` map to T3
+// tools instead.
+const TEAM_KIT = "cursor-team-kit";
+const TEAM_KIT_SKILLS = ["deslop"];
 // Codex ignores `disable-model-invocation`. This file is its switch for the same thing.
 const CODEX_POLICY = "agents/openai.yaml";
 const COMMAND = "node scripts/generate.mjs";
@@ -59,6 +67,8 @@ function rewriteLinks(text, rewrite) {
 const TERMS = [
   { key: "Your first message on a task", re: /first message on a task/i },
   { key: "`Task`", re: /`Task`|\bTask (tool|subagent|call|spawn)/ },
+  // The same spawn in plain words, such as Feature's "Delegate code-writing to a subagent".
+  { key: "a step that delegates to or spawns a subagent", re: /\b(?:delegat|spawn)\w*\b[^.\n]{0,60}\bsub-?agents?\b/i },
   { key: "subagent_type", re: /subagent_type/ },
   { key: "`AskQuestion`", re: /AskQuestion/ },
   { key: "todolist", re: /\btodo ?list\b/i },
@@ -126,12 +136,17 @@ function checkout(lock) {
     mkdirSync(CACHE, { recursive: true });
     git(CACHE, "init", "-q");
     git(CACHE, "remote", "add", "origin", lock.repository);
-    git(CACHE, "sparse-checkout", "set", lock.path);
   }
+  // Set on every run, so a cache made before a path joined the list picks it up. Cone mode also checks out the files
+  // that sit directly in each listed folder's parents, such as the team kit's LICENSE.
+  git(CACHE, "sparse-checkout", "set", "--cone", lock.path, ...TEAM_KIT_SKILLS.map((skill) => `${TEAM_KIT}/skills/${skill}`));
   const head = existsSync(join(CACHE, ".git", "HEAD")) ? tryGit(CACHE, "rev-parse", "HEAD") : undefined;
-  if (head !== lock.commit) {
+  const complete =
+    existsSync(join(CACHE, TEAM_KIT, "LICENSE")) && TEAM_KIT_SKILLS.every((skill) => existsSync(join(CACHE, TEAM_KIT, "skills", skill, "SKILL.md")));
+  if (head !== lock.commit || !complete) {
     git(CACHE, "fetch", "-q", "--depth=1", "--filter=blob:none", "origin", lock.commit);
-    git(CACHE, "checkout", "-q", "--detach", lock.commit);
+    // --force puts back a file that went missing from a checkout already at the pin.
+    git(CACHE, "checkout", "-q", "--force", "--detach", lock.commit);
   }
   return join(CACHE, lock.path);
 }
@@ -155,9 +170,10 @@ function pstackVersion(source) {
 // Every line of pstack's skill text at a checkout, with the file it is in.
 function skillLines(source) {
   const lines = new Map();
-  for (const dir of ["skills", "agents", "docs/guide"]) {
-    if (!existsSync(join(source, dir))) continue;
-    for (const path of walk(join(source, dir)).filter((path) => path.endsWith(".md"))) {
+  const dirs = [...["skills", "agents", "docs/guide"].map((dir) => join(source, dir)), ...TEAM_KIT_SKILLS.map((skill) => join(source, "..", TEAM_KIT, "skills", skill))];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const path of walk(dir).filter((path) => path.endsWith(".md"))) {
       for (const line of readFileSync(path, "utf8").split("\n")) {
         if (line.trim()) lines.set(line.trim(), relative(source, path));
       }
@@ -233,6 +249,17 @@ const skills = readdirSync(join(SOURCE, "skills")).filter((name) => existsSync(j
 const adapter = readFileSync(ADAPTER_SOURCE, "utf8");
 const problems = [];
 
+// The plugin sits beside pstack in the repository. A local `--source` folder without it beside it uses the pinned copy.
+const besideSource = join(dirname(realpathSync(SOURCE)), TEAM_KIT);
+const TEAM_KIT_SOURCE = existsSync(besideSource) ? besideSource : join(dirname(checkout(lock)), TEAM_KIT);
+const teamKit = TEAM_KIT_SKILLS.filter((skill) => {
+  if (skills.includes(skill)) problems.push(`pstack now ships its own ${skill} skill. Take it out of TEAM_KIT_SKILLS.`);
+  else if (!existsSync(join(TEAM_KIT_SOURCE, "skills", skill, "SKILL.md"))) problems.push(`${TEAM_KIT}/skills/${skill}/SKILL.md is not in ${TEAM_KIT_SOURCE}. pstack runs /${skill} by name, so find where it went.`);
+  else if (!existsSync(join(TEAM_KIT_SOURCE, "LICENSE"))) problems.push(`${TEAM_KIT}/LICENSE is not in ${TEAM_KIT_SOURCE}, and the tree ships it with ${skill}.`);
+  else return true;
+  return false;
+});
+
 const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 
 if (skills.includes(HARNESS)) problems.push(`pstack now ships a skill named ${HARNESS}. Rename the harness folder.`);
@@ -243,8 +270,15 @@ if (!existsSync(join(ROOT, CHILD))) {
   const words = wordsIn(readFileSync(join(ROOT, CHILD), "utf8"));
   if (words > CHILD_WORD_BUDGET) problems.push(`${CHILD} has ${words} words, over its budget of ${CHILD_WORD_BUDGET}. Every delegated child reads it.`);
 }
-if (wordsIn(adapter) > ADAPTER_WORD_BUDGET) {
-  problems.push(`${ADAPTER} has ${wordsIn(adapter)} words, over its budget of ${ADAPTER_WORD_BUDGET}. Move a row that one kind of step needs into a part in ${EXTRAS}/.`);
+// The adapter as a thread reads it: frontmatter, the pin, then the hand-written text. The budget counts all of it.
+function installedAdapter() {
+  const description = "Maps the Cursor names in pstack skills to T3 Code tools.";
+  const pin = `<!-- Generated by ${COMMAND} from pstack ${version} (${option("--source") ? "local source" : lock.commit}). -->`;
+  return `---\nname: ${HARNESS}\ndescription: ${description}\ndisable-model-invocation: true\n---\n\n${pin}\n\n${adapter}`;
+}
+const installedWords = wordsIn(installedAdapter());
+if (installedWords > ADAPTER_WORD_BUDGET) {
+  problems.push(`skills/${HARNESS}/SKILL.md, the adapter as a thread reads it, has ${installedWords} words, over its budget of ${ADAPTER_WORD_BUDGET}. Move a row that one kind of step needs into a part in ${EXTRAS}/.`);
 }
 
 // The adapter's read-on-demand parts, at any depth. A thread finds a part through the adapter or through another part,
@@ -308,6 +342,15 @@ for (const path of walk(join(SOURCE, "agents")).filter((path) => path.endsWith("
   const text = readFileSync(path, "utf8");
   usage.set(relative(SOURCE, path), new Set(TERMS.filter((term) => term.re.test(text)).map((term) => term.key)));
 }
+// The tree ships a team-kit skill as upstream wrote it, with no adapter line, so it may name nothing the adapter maps.
+// A Cursor name that upstream adds to one is a change for a person to read.
+for (const skill of teamKit) {
+  for (const path of walk(join(TEAM_KIT_SOURCE, "skills", skill)).filter((path) => path.endsWith(".md"))) {
+    const text = readFileSync(path, "utf8");
+    const named = TERMS.filter((term) => term.re.test(text)).map((term) => term.key);
+    if (named.length > 0) problems.push(`${TEAM_KIT}/${relative(TEAM_KIT_SOURCE, path)} matches the adapter's terms ${named.map((key) => `"${key}"`).join(", ")}. The tree ships it unchanged, so read it, and take ${skill} out of TEAM_KIT_SKILLS if it needs the adapter.`);
+  }
+}
 
 // A row is a table line's first cell or a heading. A key that only appears in passing prose does not count.
 const rowsOf = (text) => [...text.matchAll(/^\|([^|]*)\||^#+ (.*)$/gm)].map(([, cell, heading]) => (cell ?? heading).trim());
@@ -317,8 +360,9 @@ for (const [path, used] of usage) for (const key of used) users.set(key, [...(us
 for (const [key, using] of users) {
   if (!rows.some((row) => row.includes(key))) problems.push(`the T3 adapter has no row for ${key}, used by ${using.join(", ")}`);
 }
-for (const skill of skills) {
-  const frontmatter = readFileSync(join(SOURCE, "skills", skill, "SKILL.md"), "utf8").match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+for (const skill of [...skills, ...teamKit]) {
+  const root = teamKit.includes(skill) ? TEAM_KIT_SOURCE : SOURCE;
+  const frontmatter = readFileSync(join(root, "skills", skill, "SKILL.md"), "utf8").match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
   const name = frontmatter.match(/^name:(.*)$/m)?.[1].trim().replace(/^(["'])(.*)\1$/, "$2");
   if (name !== skill) problems.push(`skills/${skill}/SKILL.md has name ${JSON.stringify(name ?? "")}, not ${skill}`);
 }
@@ -330,7 +374,13 @@ function resolve(from, href) {
   const path = posix.join(posix.dirname(from), target).replace(/\/$/, "");
   if (path === ADAPTER) return path;
   if (path === EXTRAS || path.startsWith(`${EXTRAS}/`)) return existsSync(join(ROOT, path)) ? path : undefined;
-  return existsSync(join(SOURCE, path)) ? path : undefined;
+  return existsSync(upstream(path).file) ? path : undefined;
+}
+
+// Where a pstack-relative path sits upstream: in pstack, or in its plugin's folder for a shipped team-kit skill.
+function upstream(path) {
+  const inKit = teamKit.includes(path.match(/^skills\/([^/]+)/)?.[1]);
+  return { file: join(inKit ? TEAM_KIT_SOURCE : SOURCE, path), repoPath: `${inKit ? TEAM_KIT : lock.path}/${path}` };
 }
 
 function adapterLine(from) {
@@ -354,14 +404,28 @@ function render() {
     sources.set(relative(SOURCE, path), file(path));
   }
   for (const name of ["README.md", "LICENSE"]) sources.set(name, file(join(SOURCE, name)));
+  for (const skill of teamKit) {
+    const from = join(TEAM_KIT_SOURCE, "skills", skill);
+    for (const path of walk(from)) sources.set(`skills/${skill}/${relative(from, path)}`, file(path));
+    // The plugin has its own copyright line, so its license ships with the skill.
+    sources.set(`skills/${skill}/LICENSE`, file(join(TEAM_KIT_SOURCE, "LICENSE")));
+    // pstack marks its own skills this way. It keeps the skill out of threads that did not ask for pstack, and the
+    // command still runs it. The value is set whatever upstream says, and the body stays as upstream wrote it.
+    const entry = sources.get(`skills/${skill}/SKILL.md`);
+    const text = entry.bytes.toString("utf8");
+    const frontmatter = text.match(/^---\n([\s\S]*?)\n---/)?.[1];
+    if (frontmatter === undefined) {
+      problems.push(`${TEAM_KIT}/skills/${skill}/SKILL.md has no frontmatter to mark disable-model-invocation in.`);
+      continue;
+    }
+    const marked = /^disable-model-invocation:/m.test(frontmatter)
+      ? frontmatter.replace(/^disable-model-invocation:.*$/m, "disable-model-invocation: true")
+      : `${frontmatter}\ndisable-model-invocation: true`;
+    entry.bytes = Buffer.from(text.replace(/^---\n[\s\S]*?\n---/, () => `---\n${marked}\n---`));
+  }
   if (existsSync(EXTRAS_SOURCE)) for (const path of walk(EXTRAS_SOURCE)) sources.set(relative(ROOT, path), file(path));
 
-  const description = "Maps the Cursor names in pstack skills to T3 Code tools. Read it once per session before you follow a pstack skill.";
-  const pin = `<!-- Generated by ${COMMAND} from pstack ${version} (${option("--source") ? "local source" : lock.commit}). -->`;
-  sources.set(ADAPTER, {
-    bytes: Buffer.from(`---\nname: ${HARNESS}\ndescription: ${description}\ndisable-model-invocation: true\n---\n\n${pin}\n\n${adapter}`),
-    executable: false,
-  });
+  sources.set(ADAPTER, { bytes: Buffer.from(installedAdapter()), executable: false });
 
   let wrapped = 0;
   let hidden = 0;
@@ -398,8 +462,9 @@ function render() {
           mapped.push({ from: at, landed, href });
           return `${posix.relative(posix.dirname(at), landed) || "."}${suffix}`;
         }
-        const kind = statSync(join(SOURCE, target)).isDirectory() ? "tree" : "blob";
-        return `${GITHUB}/${kind}/${option("--source") ? "main" : lock.commit}/${lock.path}/${target}${suffix}`;
+        const { file: upstreamFile, repoPath } = upstream(target);
+        const kind = statSync(upstreamFile).isDirectory() ? "tree" : "blob";
+        return `${GITHUB}/${kind}/${option("--source") ? "main" : lock.commit}/${repoPath}${suffix}`;
       });
       entry.bytes = Buffer.from(text);
     }
@@ -459,5 +524,5 @@ if (flag("--check")) {
     writeFileSync(join(OUT, path), bytes);
     chmodSync(join(OUT, path), executable ? 0o755 : 0o644);
   }
-  console.log(`pstack ${version}: ${skills.length} skills, ${wrapped} files with the adapter line, ${hidden} kept out of Codex's context, written to skills/`);
+  console.log(`pstack ${version}: ${skills.length} skills and ${teamKit.length} from ${TEAM_KIT}, ${wrapped} files with the adapter line, ${hidden} kept out of Codex's context, written to skills/`);
 }

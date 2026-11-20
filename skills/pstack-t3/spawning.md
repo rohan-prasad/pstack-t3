@@ -2,7 +2,9 @@
 
 Read this before the first spawn of a session, and before you pick a model. The names map as in [the T3 Code adapter](SKILL.md).
 
-A pstack role runs in the background and names its own model. T3 Code sends a background child, and a child with its own model or settings, to `delegate_task`. So every pstack worker, verifier, reviewer, and PR owner is a `delegate_task` child, and never a `Workflow`. Per-role models and cross-provider panels then work, every child shows in the T3 app, and each child reports back to its parent. T3 Code's rule for a foreground helper on this thread's own model, which uses the provider's own subagent tool, still holds for work that is not a pstack role.
+A pstack role runs in the background and names its own model. T3 Code sends a background child, and a child with its own model or settings, to `delegate_task`. So every pstack worker, verifier, reviewer, and PR owner is a `delegate_task` child, and never a `Workflow`. Per-role models and cross-provider panels then work, every child shows in the T3 app, and each child reports back to its parent.
+
+Inside poteto-mode every subagent is a pstack role, ad-hoc helpers included, because pstack's Subagents section gives each one the background and an explicit model. So a poteto-mode thread never calls the provider's own subagent tool, such as `Agent` or `spawn_agent`. In a Claude thread, the hook that `./install.sh --hooks` adds refuses that tool there. T3 Code's rule for a foreground helper on this thread's own model, which uses the provider's own subagent tool, holds outside the mode.
 
 ## Children
 
@@ -11,6 +13,8 @@ A delegated child reads [the child adapter](child.md) in place of the full adapt
 T3 Code lets a child spawn only when its task says it may. A role that needs its own subagents, such as a PR owner or a phase owner, gets that sentence in its brief, with the absolute path of this file. Every other child does its steps itself.
 
 Give each child a `title` that names its role and its unit of work. The T3 app lists children by title.
+
+To answer a question another thread is waiting on, such as a child's, use `t3_pending_request` with `action` set to `list`, `read`, then `respond`.
 
 ## Task fields
 
