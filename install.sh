@@ -9,7 +9,8 @@
 #   ./install.sh --project /path/repo  link skills into that repo's .agents/skills and .claude/skills
 #   ./install.sh --force               also replace links that point at another checkout or skill pack
 #   ./install.sh --hooks               also add the Claude Code hooks: one brings poteto-mode back after a compaction,
-#                                      one refuses Claude Code's own subagent tool in a poteto-mode thread
+#                                      one refuses Claude Code's own subagent tool in a poteto-mode thread,
+#                                      one reminds that thread of the most-skipped rules at the start of each task
 #   ./install.sh --remove-hooks        take those hooks out of Claude Code's settings again, and link nothing
 set -euo pipefail
 

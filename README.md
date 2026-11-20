@@ -29,7 +29,7 @@ After an install, restart the agent session in T3 Code or start a new thread. Th
 
 pstack has plain skill names such as `how`, `why`, and `tdd`. When a link with one of those names already points somewhere else, `install.sh` leaves it and says so. Pass `--force` to replace it, which you need once when you move from another p3-stack checkout to this one.
 
-`./install.sh --hooks` also adds two hooks to Claude Code's settings. One brings poteto-mode back after a compaction, as [After a compaction](#after-a-compaction) explains. The other keeps a poteto-mode thread's subagents on `delegate_task`, as [Subagents](#subagents) explains. `./install.sh --remove-hooks` takes both out. A machine that ran `--hooks` before gets the second hook when it runs `--hooks` again.
+`./install.sh --hooks` also adds three hooks to Claude Code's settings. One brings poteto-mode back after a compaction, as [After a compaction](#after-a-compaction) explains. One keeps a poteto-mode thread's subagents on `delegate_task`, as [Subagents](#subagents) explains. One puts the rules that runs skip most in front of the thread at the start of each task, as [Start of a task](#start-of-a-task) explains. `./install.sh --remove-hooks` takes all three out. A machine that ran `--hooks` before gets the newer hooks when it runs `--hooks` again.
 
 ## Get started
 
@@ -73,6 +73,14 @@ pstack runs every subagent in the background, on the model its role names in `~/
 
 The adapter now maps a step that delegates in plain words, as Feature's does, to `delegate_task`, and the opening names each delegating step's model. `./install.sh --hooks` adds a second hook that makes this certain for Claude threads. Claude Code runs it before its own subagent tool. It acts only in a session that T3 Code started, because outside T3 Code that tool is how pstack spawns. In a poteto-mode thread or a pstack delegate there, it refuses the call and names `delegate_task`, the spawning part, and the model file. It lets the call through while you run a skill from outside pstack, and for the `web-fetch` helper that stands in for a missing WebFetch tool. Elsewhere it does nothing, so T3 Code's own rule holds outside the mode. Only your own message turns the mode on or off, so a PR wake or a summary that quotes `drop poteto-mode` does not. Codex, Grok, and Pi threads have no such hook and rely on the adapter.
 
+## Start of a task
+
+Cursor's mode keeps its instructions in front of the model on every turn. In T3 Code the skill text arrives once per thread, and later tasks reason past rules the adapter already states. One poteto-mode run on this repo wrote its opening as plain text with no checklist. It edited the scripts itself instead of delegating Feature's Mandatory step 4, because the edits looked small. It opened its PR without reading `technical-writing` or `unslop`.
+
+`./install.sh --hooks` adds a third hook for Claude threads. Claude Code runs it when a prompt arrives, before the model sees the prompt, and adds what the hook prints to the model's context. In a session that T3 Code started, with poteto-mode on, the hook prints a reminder of under 60 words when the prompt is your own new message. The reminder says three things. Send the opening through `send_to_user`, with the playbook's steps as a checklist, before the first edit or spawn. A step marked Mandatory never ends as a skip. A skill that a step names counts only once the thread read its file.
+
+The `/poteto-mode` command counts as your message, so a thread's first task gets the reminder too. A `/name` command for a pstack skill counts as well. The hook prints nothing for a child's completion, a PR wake, a background command's notice, a compaction summary, `drop poteto-mode`, a built-in command such as `/compact`, or a skill from outside pstack. It also prints nothing in a pstack delegate, outside T3 Code, and when it cannot read the transcript. Codex, Grok, and Pi threads have no such hook and rely on the adapter.
+
 ## T3 Code's own rules
 
 T3 Code gives every thread rules for subagents, pull requests, browser previews, and waiting. The adapter maps each pstack step onto those rules instead of around them. A child's completion wakes its parent, so nothing polls. A PR wait is `watch_pull_request`. Browser proof runs in the thread's own background tab and closes it. A child never spawns unless its brief says it may.
@@ -101,7 +109,7 @@ docs/harness/t3-code.md   the T3 adapter, the only hand-written skill text
 docs/harness/t3-code/     the child adapter, the adapter's read-on-demand parts, and T3 versions of pstack examples
 scripts/generate.mjs      builds skills/ from those
 scripts/adherence.mjs     measures how far real tasks followed the skill
-scripts/pstack-compaction-hook.mjs   the Claude Code hooks that `install.sh --hooks` registers
+scripts/pstack-compaction-hook.mjs   the three Claude Code hooks that `install.sh --hooks` registers
 scripts/transcript.mjs    how those two read a Claude transcript, with tests beside it
 skills/                   generated, committed so install needs no build step
 ```
@@ -136,6 +144,7 @@ A weekly workflow opens the bump as a PR with that list in its body, and opens a
 - An optional Claude Code hook brings the skill text back after a compaction, as described under [After a compaction](#after-a-compaction).
 - Ships `deslop` from `cursor-team-kit` at the pinned commit. pstack runs it before every commit, and without it every PR skipped that pass.
 - Sends every poteto-mode subagent to `delegate_task` on its role's model, and an optional Claude Code hook refuses Claude's own subagent tool in the mode, as described under [Subagents](#subagents).
+- An optional Claude Code hook reminds a poteto-mode thread of the rules runs skip most at the start of each task, as described under [Start of a task](#start-of-a-task).
 - Has `/no-comments` spawn Comment Sicko on every diff, and the adherence report flags a PR opened without that spawn.
 - Keeps a playbook's Mandatory mark in the opening, sends PR-status requests to the Babysit playbook, and has a thread read Opening a PR before its first PR.
 - Every row follows T3 Code's own rules, and pstack no longer loads into Codex threads that did not ask for it, as described under [T3 Code's own rules](#t3-codes-own-rules).

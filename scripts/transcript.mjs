@@ -1,10 +1,11 @@
 // What Claude Code's session transcripts look like, in one place. The compaction hook and the adherence script both
 // read them. The format is Claude Code's own, so a change in it is fixed here once.
 
-const SKILL = "(?:[a-z0-9-]+:)?poteto-mode";
+const PLUGIN = "(?:[a-z0-9-]+:)?";
 // The record Claude Code writes when the operator runs the skill. The envelope opens the prompt, so a prompt that
 // only quotes the tag does not count.
-const INVOCATION = new RegExp(`^\\s*(?:<command-message>${SKILL}</command-message>\\s*)?<command-name>/${SKILL}</command-name>`);
+const INVOCATION = new RegExp(`^\\s*(?:<command-message>${PLUGIN}poteto-mode</command-message>\\s*)?<command-name>/${PLUGIN}poteto-mode</command-name>`);
+const TYPED_COMMAND = new RegExp(`^\\s*/${PLUGIN}([a-z0-9-]+)(?=\\s|$)`);
 // The phrase the adapter gives the operator for ending the mode.
 const DROP = /\bdrop poteto[- ]mode\b/i;
 // Prompts the operator did not type as a new task: a child's completion, a background command's exit, a compaction
@@ -49,7 +50,8 @@ export function userText(record) {
 // The command and the compaction summary are still found in one, through `userText`.
 export const promptOf = (record) => (record?.isMeta ? undefined : userText(record));
 
-export const isInvocation = (prompt) => INVOCATION.test(prompt);
+export const typedCommand = (prompt) => prompt.match(TYPED_COMMAND)?.[1];
+export const isInvocation = (prompt) => INVOCATION.test(prompt) || typedCommand(prompt) === "poteto-mode";
 export const isDrop = (prompt) => DROP.test(prompt);
 export const isCompaction = (prompt) => prompt.trimStart().startsWith("This session is being continued");
 export const continuesTask = (prompt) => !isInvocation(prompt) && (CONTINUES.test(prompt) || PR_WAKE.test(prompt));

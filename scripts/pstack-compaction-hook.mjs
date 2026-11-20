@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Keeps a Claude thread on poteto-mode at two points where the skill text alone did not.
+// Keeps a Claude thread on poteto-mode at three points where the skill text alone did not.
 //
 // After a compaction. A compaction replaces a thread's history with a summary, and the summary does not carry the
 // skill text. Claude Code runs a SessionStart hook with the source `compact` right after one, and shows what the hook
@@ -10,13 +10,11 @@
 // its own model, and threads that never read the adapter's spawning part took that path. Claude Code runs a PreToolUse
 // hook before that tool, and this hook refuses it. The model reads the refusal as the tool's result.
 //
-// Both answer only in a thread where poteto-mode is on, or in a pstack delegate, and only the operator's own message
-// turns the mode on or off. The refusal also needs a session that T3 Code started, because outside T3 Code that tool
-// is how pstack spawns. It stays quiet while the operator runs a skill from outside pstack. Both stay quiet when the
-// transcript cannot be read, so the thread goes on as it would without them.
+// At the start of a task. T3 Code loads the skill text once per thread. Claude Code runs a UserPromptSubmit hook when
+// a prompt arrives, before it writes the prompt to the transcript, and adds what the hook prints to the model's context.
 //
-//   node scripts/pstack-compaction-hook.mjs --install [settings.json]   register both in Claude Code's settings
-//   node scripts/pstack-compaction-hook.mjs --remove [settings.json]    take them out again
+//   node scripts/pstack-compaction-hook.mjs --install [settings.json]   register all three in Claude Code's settings
+//   node scripts/pstack-compaction-hook.mjs --remove [settings.json]    take all three out again
 //   node scripts/pstack-compaction-hook.mjs                             the hook itself, given Claude Code's JSON on stdin
 //
 // `./install.sh --hooks` and `./install.sh --remove-hooks` call the first two.
@@ -25,7 +23,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { continuesTask, isChildBrief, isDrop, isInvocation, parse, readsOf, toolCalls, userText } from "./transcript.mjs";
+import { continuesTask, isChildBrief, isDrop, isInvocation, parse, readsOf, toolCalls, typedCommand, userText } from "./transcript.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 // Lines that can say something about pstack: the command, a drop in any spelling, a skill's injected text, a read of
@@ -37,7 +35,16 @@ const relevant = (line) => RELEVANT.test(line) || (line.includes('"type":"user"'
 const PLACEMENTS = [
   { event: "SessionStart", matcher: "compact" },
   { event: "PreToolUse", matcher: "^(Agent|Task)$" },
+  { event: "UserPromptSubmit" },
 ];
+const PROMPT_KINDS = [
+  ["invocation", isInvocation],
+  ["continuation", continuesTask],
+  ["drop", isDrop],
+  ["command", (prompt) => typedCommand(prompt) !== undefined],
+  ["message", () => true],
+];
+const TASK_REMINDER = "pstack: poteto-mode is on. Before your first edit or spawn on a new task, send the opening with `send_to_user`, with the playbook's steps as a checklist. A step marked Mandatory never ends as a skip, so Feature's step 4 delegates the code even when it looks small. A skill a step names counts only once you read its file.\n";
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 // Subagent types that stand in for a tool the session lacks, such as WebFetch. A call to one is a tool call, not a spawn.
 const TOOL_STAND_INS = new Set(["web-fetch"]);
@@ -61,8 +68,16 @@ function pathIn(text, suffix) {
 // poteto-mode the operator is running.
 function read(transcript) {
   const found = { t3: false, on: false, child: false, skills: undefined, skill: undefined, adapter: undefined, playbooks: [], other: undefined };
+  let history;
+  try {
+    history = readFileSync(transcript, "utf8");
+  } catch (error) {
+    // Claude Code creates the transcript after the first prompt's hook runs.
+    if (error.code !== "ENOENT") throw error;
+    history = "";
+  }
   let opened = false;
-  for (const line of readFileSync(transcript, "utf8").split("\n")) {
+  for (const line of history.split("\n")) {
     // Claude Code stamps each record with what started it, and T3 Code starts it as `t3-code`.
     if (!found.t3 && line.includes('"entrypoint":"t3-code"')) found.t3 = true;
     if (opened && !relevant(line)) continue;
@@ -107,6 +122,16 @@ function read(transcript) {
 
 // The skills folder of a thread where the mode is on: the one Claude Code loaded the skill from, or this checkout's.
 const skillsOf = (found) => [found.skills, join(dirname(SELF), "..", "skills")].find((dir) => dir && existsSync(join(dir, "poteto-mode", "SKILL.md")));
+
+function taskReminder(found, prompt) {
+  if (typeof prompt !== "string" || (!found.t3 && !process.env.T3CODE_THREAD_ID) || found.child) return "";
+  const kind = PROMPT_KINDS.find(([, matches]) => matches(prompt))[0];
+  if (kind === "invocation") return TASK_REMINDER;
+  if (!found.on) return "";
+  if (kind === "message") return TASK_REMINDER;
+  const skills = skillsOf(found);
+  return kind === "command" && skills && existsSync(join(skills, typedCommand(prompt), "SKILL.md")) ? TASK_REMINDER : "";
+}
 
 function reminder(found) {
   const again = "Before you reply or use any other tool, read each of these files again, in full:";
@@ -161,8 +186,9 @@ function runHook() {
   }
   if (!input?.transcript_path) return;
   const beforeTool = input.hook_event_name === "PreToolUse";
-  // Each registration matches one tool or one source. This guards a registration that matches more.
-  if (beforeTool ? !SUBAGENT_TOOLS.has(input.tool_name) : input.source !== "compact") return;
+  const promptSubmit = input.hook_event_name === "UserPromptSubmit";
+  // The SessionStart and PreToolUse registrations each match one source or one tool. This guards one that matches more.
+  if (!promptSubmit && (beforeTool ? !SUBAGENT_TOOLS.has(input.tool_name) : input.source !== "compact")) return;
   let found;
   try {
     found = read(input.transcript_path);
@@ -170,7 +196,9 @@ function runHook() {
     // A transcript the hook cannot read leaves the thread as it would be with no hook.
     return;
   }
-  if (beforeTool) {
+  if (promptSubmit) {
+    process.stdout.write(taskReminder(found, input.prompt));
+  } else if (beforeTool) {
     const reason = refusal(found, input.tool_input);
     if (reason) process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })}\n`);
   } else if (found.on || found.child) {
@@ -199,11 +227,11 @@ function register(action, path) {
     return;
   }
   const hooks = { ...settings.hooks };
-  for (const { event, matcher } of PLACEMENTS) {
+  for (const { event, ...placement } of PLACEMENTS) {
     const entries = (hooks[event] ?? []).map((entry) => ({ ...entry, hooks: (entry.hooks ?? []).filter((hook) => !ours(hook)) })).filter((entry) => entry.hooks.length > 0);
     if (action === "install") {
       // The absolute path of this Node, because a hook does not always get the shell's PATH.
-      entries.push({ matcher, hooks: [{ type: "command", command: `"${process.execPath}" "${SELF}"`, timeout: 20 }] });
+      entries.push({ ...placement, hooks: [{ type: "command", command: `"${process.execPath}" "${SELF}"`, timeout: 20 }] });
     }
     if (entries.length > 0) hooks[event] = entries;
     else delete hooks[event];

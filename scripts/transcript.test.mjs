@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { continuesTask, isDrop, isInvocation, promptOf, readsOf, userText } from "./transcript.mjs";
+import { continuesTask, isDrop, isInvocation, promptOf, readsOf, typedCommand, userText } from "./transcript.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(HERE, "pstack-compaction-hook.mjs");
@@ -46,8 +46,16 @@ const T3 = { entrypoint: "t3-code" };
 const beforeTool = (path, tool = "Agent", { input = { description: "x", prompt: "y" }, t3 = false } = {}) => {
   const env = { ...process.env };
   delete env.T3CODE_THREAD_ID;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
   if (t3) env.T3CODE_THREAD_ID = "thread-test";
   return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: input, transcript_path: path }), encoding: "utf8", env });
+};
+const beforePrompt = (path, prompt, { t3 = false } = {}) => {
+  const env = { ...process.env };
+  delete env.T3CODE_THREAD_ID;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
+  if (t3) env.T3CODE_THREAD_ID = "thread-test";
+  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: "UserPromptSubmit", transcript_path: path, prompt }), encoding: "utf8", env });
 };
 const decision = (run) => (run.stdout ? JSON.parse(run.stdout).hookSpecificOutput : undefined);
 
@@ -71,6 +79,16 @@ test("a wake or a built-in command continues a task, and an invocation never doe
   assert.ok(isDrop("ok, drop poteto-mode for the rest of this thread"));
   assert.ok(isDrop("Drop poteto mode"));
   assert.ok(!isDrop("keep going in poteto mode"));
+});
+
+test("typed commands name the skill without its plugin prefix", () => {
+  for (const [prompt, name, invoked] of [
+    ["/poteto-mode x", "poteto-mode", true],
+    ["/pstack:poteto-mode", "poteto-mode", true],
+    ["/poteto-modes", "poteto-modes", false],
+    ["/compact", "compact", false],
+    ["look at /poteto-mode", undefined, false],
+  ]) assert.deepEqual([typedCommand(prompt), isInvocation(prompt)], [name, invoked], prompt);
 });
 
 test("only a prompt counts as a prompt", () => {
@@ -247,6 +265,69 @@ test("the hook stays quiet when it cannot read the transcript", () => {
   for (const run of runs) assert.deepEqual([run.status, run.stdout, run.stderr], [0, "", ""]);
 });
 
+test("the task reminder appears only for an operator task in a top-level T3 mode thread", () => {
+  const root = scratch();
+  const skills = skillsIn(root);
+  const loaded = user(`Base directory for this skill: ${skills}/poteto-mode\n\n# Poteto mode`, { isMeta: true });
+  const on = transcript(root, [user(INVOKE, T3), loaded], "on.jsonl");
+  const typed = transcript(root, [user("/pstack:poteto-mode do X", T3), loaded], "typed.jsonl");
+  const off = transcript(root, [user("an ordinary task", T3)], "off.jsonl");
+  const outside = transcript(root, [user(INVOKE), loaded], "outside.jsonl");
+  const child = transcript(root, [user(`Act as the implementation sub-agent for this task.\nRead ${skills}/pstack-t3/child.md first.`, T3)], "child.jsonl");
+  const dropped = transcript(root, [user(INVOKE, T3), loaded, user("drop poteto-mode")], "dropped.jsonl");
+  const other = join(root, "other", "code-review", "SKILL.md");
+  mkdirSync(dirname(other), { recursive: true });
+  writeFileSync(other, "x\n");
+  const otherTask = transcript(root, [user(INVOKE, T3), loaded, user(`Base directory for this skill: ${dirname(other)}\n\n# Code review`, { isMeta: true })], "other-task.jsonl");
+  const expected = "pstack: poteto-mode is on. Before your first edit or spawn on a new task, send the opening with `send_to_user`, with the playbook's steps as a checklist. A step marked Mandatory never ends as a skip, so Feature's step 4 delegates the code even when it looks small. A skill a step names counts only once you read its file.\n";
+  const cases = [
+    [off, "/poteto-mode do X", expected, "the typed invocation starts the mode"],
+    [off, "/pstack:poteto-mode", expected, "a plugin invocation starts the mode"],
+    [off, INVOKE, expected, "the command envelope starts the mode"],
+    [on, "now add the retry", expected, "a plain message starts a task"],
+    [typed, "now add the retry", expected, "a typed invocation in history keeps the mode on"],
+    [on, "/poteto-mode", expected, "a repeated invocation starts a task"],
+    [on, "/poteto-help explain", "", "a missing pstack skill stays quiet"],
+    [on, "/pstack-t3", expected, "an installed pstack skill starts a task"],
+    [on, "/pstack:pstack-t3 explain", expected, "a plugin prefix does not change skill ownership"],
+    [on, "drop poteto-mode", "", "a drop ends the mode"],
+    [on, "Delegated task node:x (Review) [completed]:\nok", "", "a child completion continues a task"],
+    [on, "<task-notification>done</task-notification>", "", "a background task continues a task"],
+    [on, COMPACTED, "", "a compaction summary continues a task"],
+    [on, "Update on pull request #90 (https://github.com/o/r/pull/90), which T3 Code is watching for you:\n- Checks passed", "", "a PR wake continues a task"],
+    [on, "<local-command-stdout>done</local-command-stdout>", "", "a local command continues a task"],
+    [on, "[Request interrupted by user]", "", "an interrupt continues a task"],
+    [on, "/compact", "", "a built-in compact command stays quiet"],
+    [on, "/clear", "", "a built-in clear command stays quiet"],
+    [on, "<command-name>/compact</command-name>", "", "a built-in envelope stays quiet"],
+    [on, "/code-review", "", "a skill outside pstack stays quiet"],
+    [on, "/other:code-review", "", "a plugin skill outside pstack stays quiet"],
+    [child, "implement it", "", "a delegate stays quiet"],
+    [child, "/poteto-mode implement it", "", "an invocation in a delegate stays quiet"],
+    [outside, "implement it", "", "the mode outside T3 stays quiet"],
+    [outside, "/poteto-mode implement it", "", "an invocation outside T3 stays quiet"],
+    [off, "implement it", "", "the mode off stays quiet"],
+    [off, "/pstack-t3", "", "a pstack command with the mode off stays quiet"],
+    [dropped, "implement it", "", "a prior drop keeps the mode off"],
+    [otherTask, "now add the retry", expected, "the next operator task returns to the mode"],
+  ];
+  for (const [path, prompt, output, name] of cases) assert.equal(beforePrompt(path, prompt).stdout, output, name);
+  assert.equal(beforePrompt(outside, "implement it", { t3: true }).stdout, expected, "the T3 environment also identifies the session");
+  assert.equal(beforePrompt(join(root, "missing.jsonl"), "/poteto-mode do X", { t3: true }).stdout, expected, "the first prompt arrives before the transcript exists");
+  assert.equal(beforePrompt(join(root, "missing.jsonl"), "implement it", { t3: true }).stdout, "", "empty history does not enable the mode");
+  assert.ok(beforePrompt(on, "implement it").stdout.trim().split(/\s+/).length < 60, "the reminder stays under 60 words");
+  const folder = join(root, "folder.jsonl");
+  mkdirSync(folder);
+  const unreadable = beforePrompt(folder, "/poteto-mode", { t3: true });
+  assert.deepEqual([unreadable.status, unreadable.stdout, unreadable.stderr], [0, "", ""], "a directory is unreadable history, not empty history");
+  if (process.getuid?.() !== 0) {
+    const locked = transcript(root, [user(INVOKE, T3)], "locked.jsonl");
+    chmodSync(locked, 0o000);
+    const run = beforePrompt(locked, "/poteto-mode", { t3: true });
+    assert.deepEqual([run.status, run.stdout, run.stderr], [0, "", ""], "a permission error stays quiet");
+  }
+});
+
 test("the installer changes only its own hooks", () => {
   const root = scratch();
   const settings = join(root, "settings.json");
@@ -263,11 +344,15 @@ test("the installer changes only its own hooks", () => {
   assert.equal(after.hooks.SessionStart[1].matcher, "compact");
   assert.equal(after.hooks.PreToolUse.length, 1);
   assert.equal(after.hooks.PreToolUse[0].matcher, "^(Agent|Task)$");
-  assert.equal(after.hooks.PreToolUse[0].hooks[0].command, after.hooks.SessionStart[1].hooks[0].command, "both events run this script");
+  assert.equal(after.hooks.PreToolUse[0].hooks[0].command, after.hooks.SessionStart[1].hooks[0].command, "the existing events run this script");
+  assert.equal(after.hooks.UserPromptSubmit.length, 1);
+  assert.ok(!Object.hasOwn(after.hooks.UserPromptSubmit[0], "matcher"), "UserPromptSubmit has no matcher support");
+  assert.equal(after.hooks.UserPromptSubmit[0].hooks[0].command, after.hooks.SessionStart[1].hooks[0].command, "the task reminder runs this script too");
   assert.deepEqual(after.hooks.Stop, original.hooks.Stop);
   assert.match(install("install").stdout, /already/);
   assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.SessionStart.length, 2);
   assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.PreToolUse.length, 1);
+  assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.UserPromptSubmit.length, 1);
 
   // A machine that registered only the after-compaction hook gets the second one on the next install.
   const older = join(root, "older.json");
@@ -276,6 +361,15 @@ test("the installer changes only its own hooks", () => {
   const upgraded = JSON.parse(readFileSync(older, "utf8"));
   assert.equal(upgraded.hooks.SessionStart.length, 1);
   assert.equal(upgraded.hooks.PreToolUse.length, 1);
+  assert.equal(upgraded.hooks.UserPromptSubmit.length, 1);
+
+  const twoHooks = join(root, "two-hooks.json");
+  writeFileSync(twoHooks, JSON.stringify({ hooks: { SessionStart: after.hooks.SessionStart.slice(1), PreToolUse: after.hooks.PreToolUse } }));
+  assert.equal(install("install", twoHooks).status, 0);
+  assert.deepEqual(Object.fromEntries(Object.entries(JSON.parse(readFileSync(twoHooks, "utf8")).hooks).map(([event, entries]) => [event, entries.length])), { SessionStart: 1, PreToolUse: 1, UserPromptSubmit: 1 }, "an install over the old two hooks gains the third once");
+  assert.match(install("install", twoHooks).stdout, /already in/);
+  assert.equal(install("remove", twoHooks).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(twoHooks, "utf8")), {}, "remove empties all three hooks");
 
   assert.equal(install("remove").status, 0);
   assert.deepEqual(JSON.parse(readFileSync(settings, "utf8")), original);
@@ -286,6 +380,9 @@ test("the installer changes only its own hooks", () => {
   assert.ok(!existsSync(absent), "removing from a missing file creates nothing");
   assert.equal(install("install", absent).status, 0);
   assert.equal(statSync(absent).mode & 0o777, 0o600, "a new settings file is the owner's alone");
+  const fresh = JSON.parse(readFileSync(absent, "utf8"));
+  assert.deepEqual(Object.keys(fresh.hooks), ["SessionStart", "PreToolUse", "UserPromptSubmit"], "a fresh install registers all three events");
+  assert.ok(!Object.hasOwn(fresh.hooks.UserPromptSubmit[0], "matcher"), "a fresh UserPromptSubmit registration has no matcher");
 
   const target = join(root, "dotfiles", "settings.json");
   mkdirSync(dirname(target));
