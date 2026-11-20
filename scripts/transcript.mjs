@@ -8,8 +8,13 @@ const INVOCATION = new RegExp(`^\\s*(?:<command-message>${SKILL}</command-messag
 // The phrase the adapter gives the operator for ending the mode.
 const DROP = /\bdrop poteto[- ]mode\b/i;
 // Prompts the operator did not type as a new task: a child's completion, a background command's exit, a compaction
-// summary, a built-in command such as /compact, an interrupt, and T3 Code's wake for a PR the thread watches.
-const CONTINUES = /^\s*(Delegated task |This session is being continued|<task-notification|<local-command|<command-name>|\[Request interrupted|Update on pull request #)/;
+// summary, a built-in command such as /compact, and an interrupt.
+const CONTINUES = /^\s*(Delegated task |This session is being continued|<task-notification|<local-command|<command-name>|\[Request interrupted)/;
+// T3 Code's wake for a PR the thread watches. The whole header, so an operator's own "Update on pull request #3,
+// please" stays a new task.
+const PR_WAKE = /^\s*Update on pull request #\d+ \(https?:\/\/[^)\s]+\), which T3 Code is watching for you:/;
+// T3 Code opens a delegated child's thread with this line, then the brief.
+const CHILD_BRIEF = /^\s*Act as (?:the|a)\b[^\n.]*\bsub-?agent\b/i;
 
 const READS_WHOLE = new Set(["cat", "bat", "less", "more", "nl"]);
 const READS_PART = new Set(["head", "tail"]);
@@ -47,7 +52,18 @@ export const promptOf = (record) => (record?.isMeta ? undefined : userText(recor
 export const isInvocation = (prompt) => INVOCATION.test(prompt);
 export const isDrop = (prompt) => DROP.test(prompt);
 export const isCompaction = (prompt) => prompt.trimStart().startsWith("This session is being continued");
-export const continuesTask = (prompt) => !isInvocation(prompt) && CONTINUES.test(prompt);
+export const continuesTask = (prompt) => !isInvocation(prompt) && (CONTINUES.test(prompt) || PR_WAKE.test(prompt));
+export const isChildBrief = (prompt) => CHILD_BRIEF.test(prompt);
+
+// The ids of the tool calls a hook refused with a reason that matches `reason`. Claude Code reports a refusal as the
+// call's error result, with the hook's reason in it.
+export function refusedCalls(record, reason) {
+  if (record?.type !== "user" || record.isSidechain) return [];
+  const content = record.message?.content;
+  return (Array.isArray(content) ? content : [])
+    .filter((block) => block?.type === "tool_result" && block.is_error && reason.test(textOf(block.content)))
+    .map((block) => block.tool_use_id);
+}
 
 export function toolCalls(record) {
   if (record?.type !== "assistant" || record.isSidechain) return [];

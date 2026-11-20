@@ -21,7 +21,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { continuesTask, isCompaction, isDrop, isInvocation, parse, readsOf, toolCalls, userText } from "./transcript.mjs";
+import { continuesTask, isCompaction, isDrop, isInvocation, parse, readsOf, refusedCalls, toolCalls, userText } from "./transcript.mjs";
 
 const args = process.argv.slice(2);
 const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -35,6 +35,9 @@ const PLAYBOOK = /playbooks\/[a-z-]+\.md$/;
 const PRINCIPLE = /principle-[^/\s]*\/SKILL\.md$/;
 const SKILL_TEXT = /pstack-t3\/(SKILL|child)\.md$|poteto-mode\/SKILL\.md$|playbooks\/[a-z-]+\.md$/;
 const SPAWN = (name) => name.endsWith("delegate_task") || name === "Agent" || name === "Task";
+const NATIVE = (name) => name === "Agent" || name === "Task";
+// The reason pstack's hook gives when it refuses Claude Code's own subagent tool.
+const REFUSAL = /\bpstack:/;
 const EDIT = new Set(["Edit", "Write", "NotebookEdit"]);
 const isChecklist = (message) => typeof message === "string" && (message.match(/^\s*(?:[-*]|\d+[.)])\s+\S/gm) ?? []).length >= 3;
 
@@ -42,6 +45,7 @@ const isChecklist = (message) => typeof message === "string" && (message.match(/
 function sessionIn(path) {
   const tasks = [];
   const compactions = [];
+  const refused = new Set();
   let on = false;
   let held = false;
   let task;
@@ -49,11 +53,12 @@ function sessionIn(path) {
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const record = parse(line);
     if (!record) continue;
+    for (const id of refusedCalls(record, REFUSAL)) refused.add(id);
     for (const call of toolCalls(record)) {
       const reads = readsOf(call);
       if (waiting && reads.some((read) => SKILL_TEXT.test(read.path))) waiting.reread = true;
       if (reads.some((read) => read.whole && ADAPTER.test(read.path))) held = true;
-      if (task) task.calls.push({ name: call.name ?? "", input: call.input ?? {}, reads });
+      if (task) task.calls.push({ id: call.id, name: call.name ?? "", input: call.input ?? {}, reads });
     }
     if (task && record.type === "assistant") task.model ??= record.message?.model;
     const prompt = userText(record);
@@ -74,17 +79,18 @@ function sessionIn(path) {
     task = on ? { started: at, invoked, held, calls: [], model: undefined } : undefined;
     if (task) tasks.push(task);
   }
-  return { tasks, compactions };
+  return { tasks, compactions, refused };
 }
 
-function measure(task) {
+// `refused` holds the native spawns that the hook turned away. They count apart, because they never ran.
+function measure(task, refused) {
   const { calls } = task;
   const reads = calls.flatMap((call) => call.reads);
   const state = (pattern) => {
     const hits = reads.filter((read) => pattern.test(read.path));
     return hits.some((read) => read.whole) ? "full" : hits.length > 0 ? "part" : "-";
   };
-  const firstWork = calls.findIndex((call) => SPAWN(call.name) || EDIT.has(call.name));
+  const firstWork = calls.findIndex((call) => (SPAWN(call.name) && !refused.has(call.id)) || EDIT.has(call.name));
   const opening = calls.findIndex((call) => call.name.endsWith("send_to_user") && isChecklist(call.input.message));
   const adapter = state(ADAPTER);
   return {
@@ -97,7 +103,8 @@ function measure(task) {
     openingFirst: opening !== -1 && (firstWork === -1 || opening < firstWork),
     todo: calls.some((call) => ["TodoWrite", "TaskCreate"].includes(call.name)),
     delegated: calls.filter((call) => call.name.endsWith("delegate_task")).length,
-    native: calls.filter((call) => call.name === "Agent" || call.name === "Task").length,
+    native: calls.filter((call) => NATIVE(call.name) && !refused.has(call.id)).length,
+    refused: calls.filter((call) => NATIVE(call.name) && refused.has(call.id)).length,
   };
 }
 
@@ -117,7 +124,7 @@ for (const project of readdirSync(DIR)) {
     compactions.push(...session.compactions.filter((compaction) => compaction.at.slice(0, 10) >= SINCE));
     for (const task of session.tasks) {
       if (task.started.slice(0, 10) < SINCE) continue;
-      const result = measure(task);
+      const result = measure(task, session.refused);
       if (result.tools < MIN_TOOLS) {
         short += 1;
         continue;
@@ -171,7 +178,7 @@ const report = (title, group) => {
   console.log(`  sent an opening with a checklist          ${share((row) => row.opening !== undefined)}, before the first edit or spawn in ${count((row) => row.openingFirst)}`);
   console.log(`  used a todo tool                          ${share((row) => row.todo)}`);
   console.log(`  spawned with delegate_task                ${share((row) => row.delegated > 0)}`);
-  console.log(`  spawned with the provider's own tool      ${share((row) => row.native > 0)}`);
+  console.log(`  spawned with the provider's own tool      ${share((row) => row.native > 0)}, and the hook refused one in ${count((row) => row.refused > 0)}`);
 };
 report("tasks that started with the command", rows.filter((row) => row.invoked));
 report("tasks that came later while the mode held", rows.filter((row) => !row.invoked));
