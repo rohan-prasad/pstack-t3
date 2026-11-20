@@ -8,8 +8,9 @@
 #   ./install.sh                       link skills for every project
 #   ./install.sh --project /path/repo  link skills into that repo's .agents/skills and .claude/skills
 #   ./install.sh --force               also replace links that point at another checkout or skill pack
-#   ./install.sh --hooks               also add the Claude Code hook that brings poteto-mode back after a compaction
-#   ./install.sh --remove-hooks        take that hook out of Claude Code's settings again, and link nothing
+#   ./install.sh --hooks               also add the Claude Code hooks: one brings poteto-mode back after a compaction,
+#                                      one refuses Claude Code's own subagent tool in a poteto-mode thread
+#   ./install.sh --remove-hooks        take those hooks out of Claude Code's settings again, and link nothing
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,17 +44,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# The hook lives in Claude Code's own settings, which cover every project.
+# The hooks live in Claude Code's own settings, which cover every project.
 if [[ -n "$HOOKS" && -n "$PROJECT" ]]; then
   printf -- '--hooks and --remove-hooks change your Claude Code settings, not a project. Run them without --project.\n%s\n' "$USAGE" >&2
   exit 2
 fi
 if [[ -n "$HOOKS" ]] && ! command -v node >/dev/null 2>&1; then
-  printf 'the hook runs on Node, and node is not on PATH\n' >&2
+  printf 'the hooks run on Node, and node is not on PATH\n' >&2
   exit 1
 fi
 
-# Removing the hook is its own job. It links no skills and creates no settings file.
+# Removing the hooks is its own job. It links no skills and creates no settings file.
 if [[ "$HOOKS" == remove ]]; then
   node "$ROOT/scripts/pstack-compaction-hook.mjs" --remove "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   exit 0
@@ -132,7 +133,7 @@ fi
 
 if [[ "$HOOKS" == install ]]; then
   if [[ ! -d "$CLAUDE_HOME" ]]; then
-    printf 'no %s, so there is no Claude Code to add the hook to. The skills are linked, and the hook is not installed.\n' "$CLAUDE_HOME" >&2
+    printf 'no %s, so there is no Claude Code to add the hooks to. The skills are linked, and the hooks are not installed.\n' "$CLAUDE_HOME" >&2
     exit 1
   fi
   node "$ROOT/scripts/pstack-compaction-hook.mjs" --install "$CLAUDE_HOME/settings.json"

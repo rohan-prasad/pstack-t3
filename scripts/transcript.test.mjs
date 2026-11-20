@@ -40,6 +40,10 @@ function transcript(root, lines, name = "session.jsonl") {
 }
 
 const hook = (path, source = "compact") => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ transcript_path: path, source }), encoding: "utf8" });
+// Claude Code's input for a PreToolUse hook, and the decision the hook printed, if any.
+const beforeTool = (path, tool = "Agent") =>
+  spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: { description: "x", prompt: "y" }, transcript_path: path }), encoding: "utf8" });
+const decision = (run) => (run.stdout ? JSON.parse(run.stdout).hookSpecificOutput : undefined);
 
 test("an invocation is the command envelope at the start of a prompt", () => {
   assert.ok(isInvocation(INVOKE));
@@ -158,7 +162,37 @@ test("the hook knows a delegate by the child adapter path in its brief", () => {
   assert.equal(hook(transcript(root, [user("a top-level task"), user(`by the way, what is ${skills}/pstack-t3/child.md for?`)])).stdout, "");
 });
 
-test("the installer changes only its own hook", () => {
+test("the hook refuses Claude Code's own subagent tool where the mode is on, and in a delegate", () => {
+  const root = scratch();
+  const skills = skillsIn(root);
+  const loaded = user(`Base directory for this skill: ${skills}/poteto-mode\n\n# Poteto mode`, { isMeta: true });
+  const on = transcript(root, [user(INVOKE), loaded, bash(`cat ${skills}/pstack-t3/SKILL.md`)], "on.jsonl");
+  for (const tool of ["Agent", "Task"]) {
+    const refused = decision(beforeTool(on, tool));
+    assert.equal(refused.hookEventName, "PreToolUse");
+    assert.equal(refused.permissionDecision, "deny", tool);
+    assert.match(refused.permissionDecisionReason, /`delegate_task`/);
+    assert.ok(refused.permissionDecisionReason.includes(`${skills}/pstack-t3/spawning.md`));
+    assert.ok(refused.permissionDecisionReason.includes("~/.agents/pstack-models.md"));
+  }
+  assert.equal(beforeTool(on, "Bash").stdout, "", "another tool is left alone");
+  assert.equal(beforeTool(on, "TaskStop").stdout, "", "a tool whose name only starts with Task is left alone");
+  assert.equal(hook(on).stdout.startsWith("pstack: poteto-mode is on"), true, "the compaction reminder still works");
+
+  const quiet = (lines, name) => assert.equal(beforeTool(transcript(root, lines, name)).stdout, "", name);
+  quiet([user("plain task"), bash("ls")], "plain.jsonl");
+  quiet([user(INVOKE), loaded, user("thanks, now drop poteto-mode")], "dropped.jsonl");
+  quiet([user("look at this"), result(INVOKE)], "quoted.jsonl");
+  assert.equal(beforeTool(join(root, "missing.jsonl")).stdout, "", "an unreadable transcript lets the call go on");
+
+  const brief = `Act as the review sub-agent.\n\nRead ${skills}/pstack-t3/child.md first. Review the diff.`;
+  const child = decision(beforeTool(transcript(root, [user(brief)], "child.jsonl")));
+  assert.equal(child.permissionDecision, "deny");
+  assert.match(child.permissionDecisionReason, /^pstack: this thread is a pstack delegate/);
+  assert.ok(child.permissionDecisionReason.includes(`${skills}/pstack-t3/spawning.md`));
+});
+
+test("the installer changes only its own hooks", () => {
   const root = scratch();
   const settings = join(root, "settings.json");
   const install = (action, path = settings) => spawnSync(process.execPath, [HOOK, `--${action}`, path], { encoding: "utf8" });
@@ -172,8 +206,21 @@ test("the installer changes only its own hook", () => {
   assert.equal(after.hooks.SessionStart.length, 2);
   assert.deepEqual(after.hooks.SessionStart[0], original.hooks.SessionStart[0], "a hook with a longer name is someone else's");
   assert.equal(after.hooks.SessionStart[1].matcher, "compact");
+  assert.equal(after.hooks.PreToolUse.length, 1);
+  assert.equal(after.hooks.PreToolUse[0].matcher, "Agent|Task");
+  assert.equal(after.hooks.PreToolUse[0].hooks[0].command, after.hooks.SessionStart[1].hooks[0].command, "both events run this script");
+  assert.deepEqual(after.hooks.Stop, original.hooks.Stop);
   assert.match(install("install").stdout, /already/);
   assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.SessionStart.length, 2);
+  assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.PreToolUse.length, 1);
+
+  // A machine that registered only the after-compaction hook gets the second one on the next install.
+  const older = join(root, "older.json");
+  writeFileSync(older, JSON.stringify({ hooks: { SessionStart: after.hooks.SessionStart.slice(1) } }));
+  assert.equal(install("install", older).status, 0);
+  const upgraded = JSON.parse(readFileSync(older, "utf8"));
+  assert.equal(upgraded.hooks.SessionStart.length, 1);
+  assert.equal(upgraded.hooks.PreToolUse.length, 1);
 
   assert.equal(install("remove").status, 0);
   assert.deepEqual(JSON.parse(readFileSync(settings, "utf8")), original);
