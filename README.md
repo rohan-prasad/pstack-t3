@@ -57,7 +57,7 @@ A poteto-mode task opens with a message that names your goal, the playbook it ma
 
 The mode holds for the whole thread, so a later message is a poteto-mode task too.
 
-To measure it, run `node scripts/adherence.mjs`. It reads the Claude transcripts on this machine. For each task it prints whether the thread read the whole adapter and a whole playbook, whether it sent the opening, and how it spawned. A file counts as read only when a tool call read it. Tasks that start with the command are reported apart from later ones. `--since 2026-11-20` limits it to that date on. It prints dates and counts, never prompt text.
+To measure it, run `node scripts/adherence.mjs`. It reads the Claude transcripts on this machine. For each task it prints whether the thread read the whole adapter and a whole playbook, whether it sent the opening, and how it spawned. For a task that ran `gh pr create`, it also prints whether Comment Sicko was spawned before it. `/no-comments` spawns that reviewer on every diff, because it judges workaround code as well as comments, and a thread that saw no comments in its diff skipped it. A file counts as read only when a tool call read it. Tasks that start with the command are reported apart from later ones. `--since 2026-11-20` limits it to that date on. It prints dates and counts, never prompt text.
 
 ## After a compaction
 
@@ -136,6 +136,7 @@ A weekly workflow opens the bump as a PR with that list in its body, and opens a
 - An optional Claude Code hook brings the skill text back after a compaction, as described under [After a compaction](#after-a-compaction).
 - Ships `deslop` from `cursor-team-kit` at the pinned commit. pstack runs it before every commit, and without it every PR skipped that pass.
 - Sends every poteto-mode subagent to `delegate_task` on its role's model, and an optional Claude Code hook refuses Claude's own subagent tool in the mode, as described under [Subagents](#subagents).
+- Has `/no-comments` spawn Comment Sicko on every diff, and the adherence report flags a PR opened without that spawn.
 - Keeps a playbook's Mandatory mark in the opening, sends PR-status requests to the Babysit playbook, and has a thread read Opening a PR before its first PR.
 - Every row follows T3 Code's own rules, and pstack no longer loads into Codex threads that did not ask for it, as described under [T3 Code's own rules](#t3-codes-own-rules).
 - The generator checks every T3 tool name against `t3-tools.json`. That check found eight names T3 Code had since renamed or merged.
