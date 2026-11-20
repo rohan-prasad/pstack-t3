@@ -29,7 +29,7 @@ const CHILD_WORD_BUDGET = 500;
 const ADAPTER_WORD_BUDGET = 1900;
 // T3 Code's tool names, as a live T3 thread lists them. AGENTS.md says how to refresh the file.
 const T3_TOOLS_PATH = join(ROOT, "t3-tools.json");
-// Snake-case names the adapter may use that are Cursor fields or T3 field values, not T3 tools.
+// Snake-case names the adapter may use that are Cursor fields, T3 field values, or a provider's own tool, not T3 tools.
 const NOT_TOOLS = new Set([
   "subagent_type",
   "run_in_background",
@@ -39,7 +39,14 @@ const NOT_TOOLS = new Set([
   "update_state",
   "fixed_time",
   "waiting_for_children",
+  "spawn_agent",
 ]);
+// pstack runs `/deslop` from Cursor's `cursor-team-kit` plugin before every commit, and its README says to install that
+// plugin beside pstack. The plugin sits beside pstack in the same repository, so the tree ships each skill listed here
+// from the pinned commit. List only a skill that a pstack step runs by name. `control-ui` and `control-cli` map to T3
+// tools instead.
+const TEAM_KIT = "cursor-team-kit";
+const TEAM_KIT_SKILLS = ["deslop"];
 // Codex ignores `disable-model-invocation`. This file is its switch for the same thing.
 const CODEX_POLICY = "agents/openai.yaml";
 const COMMAND = "node scripts/generate.mjs";
@@ -59,6 +66,8 @@ function rewriteLinks(text, rewrite) {
 const TERMS = [
   { key: "Your first message on a task", re: /first message on a task/i },
   { key: "`Task`", re: /`Task`|\bTask (tool|subagent|call|spawn)/ },
+  // The same spawn in plain words, such as Feature's "Delegate code-writing to a subagent".
+  { key: "a step that delegates to or spawns a subagent", re: /\b(?:delegat|spawn)\w*\b[^.\n]{0,60}\bsub-?agents?\b/i },
   { key: "subagent_type", re: /subagent_type/ },
   { key: "`AskQuestion`", re: /AskQuestion/ },
   { key: "todolist", re: /\btodo ?list\b/i },
@@ -126,10 +135,12 @@ function checkout(lock) {
     mkdirSync(CACHE, { recursive: true });
     git(CACHE, "init", "-q");
     git(CACHE, "remote", "add", "origin", lock.repository);
-    git(CACHE, "sparse-checkout", "set", lock.path);
   }
+  // Set on every run, so a cache made before a path joined the list picks it up.
+  git(CACHE, "sparse-checkout", "set", lock.path, ...TEAM_KIT_SKILLS.map((skill) => `${TEAM_KIT}/skills/${skill}`));
   const head = existsSync(join(CACHE, ".git", "HEAD")) ? tryGit(CACHE, "rev-parse", "HEAD") : undefined;
-  if (head !== lock.commit) {
+  const complete = TEAM_KIT_SKILLS.every((skill) => existsSync(join(CACHE, TEAM_KIT, "skills", skill, "SKILL.md")));
+  if (head !== lock.commit || !complete) {
     git(CACHE, "fetch", "-q", "--depth=1", "--filter=blob:none", "origin", lock.commit);
     git(CACHE, "checkout", "-q", "--detach", lock.commit);
   }
@@ -155,9 +166,10 @@ function pstackVersion(source) {
 // Every line of pstack's skill text at a checkout, with the file it is in.
 function skillLines(source) {
   const lines = new Map();
-  for (const dir of ["skills", "agents", "docs/guide"]) {
-    if (!existsSync(join(source, dir))) continue;
-    for (const path of walk(join(source, dir)).filter((path) => path.endsWith(".md"))) {
+  const dirs = [...["skills", "agents", "docs/guide"].map((dir) => join(source, dir)), ...TEAM_KIT_SKILLS.map((skill) => join(source, "..", TEAM_KIT, "skills", skill))];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const path of walk(dir).filter((path) => path.endsWith(".md"))) {
       for (const line of readFileSync(path, "utf8").split("\n")) {
         if (line.trim()) lines.set(line.trim(), relative(source, path));
       }
@@ -232,6 +244,15 @@ const version = option("--source") ? pstackVersion(SOURCE) : lock.version;
 const skills = readdirSync(join(SOURCE, "skills")).filter((name) => existsSync(join(SOURCE, "skills", name, "SKILL.md")));
 const adapter = readFileSync(ADAPTER_SOURCE, "utf8");
 const problems = [];
+
+// The plugin sits beside pstack in the repository, and so beside a local `--source` folder too.
+const TEAM_KIT_SOURCE = join(SOURCE, "..", TEAM_KIT);
+const teamKit = TEAM_KIT_SKILLS.filter((skill) => {
+  if (skills.includes(skill)) problems.push(`pstack now ships its own ${skill} skill. Take it out of TEAM_KIT_SKILLS.`);
+  else if (!existsSync(join(TEAM_KIT_SOURCE, "skills", skill, "SKILL.md"))) problems.push(`${TEAM_KIT}/skills/${skill}/SKILL.md is not beside pstack in the source. pstack runs /${skill} by name, so find where it went.`);
+  else return true;
+  return false;
+});
 
 const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 
@@ -308,6 +329,15 @@ for (const path of walk(join(SOURCE, "agents")).filter((path) => path.endsWith("
   const text = readFileSync(path, "utf8");
   usage.set(relative(SOURCE, path), new Set(TERMS.filter((term) => term.re.test(text)).map((term) => term.key)));
 }
+// A shipped team-kit skill gets the same scan, so a Cursor name that upstream adds to one needs a row too.
+for (const skill of teamKit) {
+  const used = new Set();
+  for (const path of walk(join(TEAM_KIT_SOURCE, "skills", skill)).filter((path) => path.endsWith(".md"))) {
+    const text = readFileSync(path, "utf8");
+    for (const term of TERMS) if (term.re.test(text)) used.add(term.key);
+  }
+  usage.set(`skills/${skill}/SKILL.md`, used);
+}
 
 // A row is a table line's first cell or a heading. A key that only appears in passing prose does not count.
 const rowsOf = (text) => [...text.matchAll(/^\|([^|]*)\||^#+ (.*)$/gm)].map(([, cell, heading]) => (cell ?? heading).trim());
@@ -317,8 +347,9 @@ for (const [path, used] of usage) for (const key of used) users.set(key, [...(us
 for (const [key, using] of users) {
   if (!rows.some((row) => row.includes(key))) problems.push(`the T3 adapter has no row for ${key}, used by ${using.join(", ")}`);
 }
-for (const skill of skills) {
-  const frontmatter = readFileSync(join(SOURCE, "skills", skill, "SKILL.md"), "utf8").match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+for (const skill of [...skills, ...teamKit]) {
+  const root = teamKit.includes(skill) ? TEAM_KIT_SOURCE : SOURCE;
+  const frontmatter = readFileSync(join(root, "skills", skill, "SKILL.md"), "utf8").match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
   const name = frontmatter.match(/^name:(.*)$/m)?.[1].trim().replace(/^(["'])(.*)\1$/, "$2");
   if (name !== skill) problems.push(`skills/${skill}/SKILL.md has name ${JSON.stringify(name ?? "")}, not ${skill}`);
 }
@@ -354,6 +385,19 @@ function render() {
     sources.set(relative(SOURCE, path), file(path));
   }
   for (const name of ["README.md", "LICENSE"]) sources.set(name, file(join(SOURCE, name)));
+  for (const skill of teamKit) {
+    const from = join(TEAM_KIT_SOURCE, "skills", skill);
+    for (const path of walk(from)) sources.set(`skills/${skill}/${relative(from, path)}`, file(path));
+    // The plugin has its own copyright line, so its license ships with the skill.
+    sources.set(`skills/${skill}/LICENSE`, file(join(TEAM_KIT_SOURCE, "LICENSE")));
+    // pstack marks its own skills this way. It keeps the skill out of threads that did not ask for pstack, and the
+    // command still runs it. The body stays as upstream wrote it.
+    const entry = sources.get(`skills/${skill}/SKILL.md`);
+    const text = entry.bytes.toString("utf8");
+    if (!/^disable-model-invocation:/m.test(text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "")) {
+      entry.bytes = Buffer.from(text.replace(/^---\n([\s\S]*?)\n---/, "---\n$1\ndisable-model-invocation: true\n---"));
+    }
+  }
   if (existsSync(EXTRAS_SOURCE)) for (const path of walk(EXTRAS_SOURCE)) sources.set(relative(ROOT, path), file(path));
 
   const description = "Maps the Cursor names in pstack skills to T3 Code tools. Read it once per session before you follow a pstack skill.";
@@ -459,5 +503,5 @@ if (flag("--check")) {
     writeFileSync(join(OUT, path), bytes);
     chmodSync(join(OUT, path), executable ? 0o755 : 0o644);
   }
-  console.log(`pstack ${version}: ${skills.length} skills, ${wrapped} files with the adapter line, ${hidden} kept out of Codex's context, written to skills/`);
+  console.log(`pstack ${version}: ${skills.length} skills and ${teamKit.length} from ${TEAM_KIT}, ${wrapped} files with the adapter line, ${hidden} kept out of Codex's context, written to skills/`);
 }

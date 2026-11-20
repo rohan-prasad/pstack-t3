@@ -9,7 +9,7 @@ Spawn only when your task says you may. When a step says to spawn and your task 
 | Your first message on a task | Skip pstack's opening. Open your report with the goal. |
 | `AskQuestion` | Do not ask. Decide, and name the assumption in your report. When only the operator can decide, return with the question. |
 | Open a todolist | The session's todo or plan tool, or a list in your reply. |
-| Run another pstack skill (`/name` or "the **name** skill") | Read `<skills>/<name>/SKILL.md` and follow it. |
+| Run another pstack skill, `/deslop` included (`/name` or "the **name** skill") | Read `<skills>/<name>/SKILL.md` and follow it. |
 | `Read`, `Grep`, `Glob` | The session's file and search tools, or `cat` and `rg` in the shell. |
 | `readonly: true` | Edit no files, run no git command that writes, and use `git --no-optional-locks` for status. |
 | `.cursor/skills/`, `~/.cursor/skills/` | `.agents/skills/`, `~/.agents/skills/`. In a Claude thread, `.claude/skills/` and `~/.claude/skills/`. |
