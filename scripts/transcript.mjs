@@ -8,8 +8,8 @@ const INVOCATION = new RegExp(`^\\s*(?:<command-message>${SKILL}</command-messag
 // The phrase the adapter gives the operator for ending the mode.
 const DROP = /\bdrop poteto[- ]mode\b/i;
 // Prompts the operator did not type as a new task: a child's completion, a background command's exit, a compaction
-// summary, a built-in command such as /compact, and an interrupt.
-const CONTINUES = /^\s*(Delegated task |This session is being continued|<task-notification|<local-command|<command-name>|\[Request interrupted)/;
+// summary, a built-in command such as /compact, an interrupt, and T3 Code's wake for a PR the thread watches.
+const CONTINUES = /^\s*(Delegated task |This session is being continued|<task-notification|<local-command|<command-name>|\[Request interrupted|Update on pull request #)/;
 
 const READS_WHOLE = new Set(["cat", "bat", "less", "more", "nl"]);
 const READS_PART = new Set(["head", "tail"]);

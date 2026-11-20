@@ -54,6 +54,7 @@ test("a wake or a built-in command continues a task, and an invocation never doe
   assert.ok(continuesTask("Delegated task node:x (Review) [completed]:\nok"));
   assert.ok(continuesTask("<command-name>/compact</command-name>\n<command-message>compact</command-message>"));
   assert.ok(continuesTask(COMPACTED));
+  assert.ok(continuesTask("Update on pull request #90 (https://github.com/o/r/pull/90), which T3 Code is watching for you:\n- Checks failed on ab6004f"));
   assert.ok(!continuesTask("<command-name>/poteto-mode</command-name>"));
   assert.ok(!continuesTask("now fix the test"));
   assert.ok(isDrop("ok, drop poteto-mode for the rest of this thread"));
