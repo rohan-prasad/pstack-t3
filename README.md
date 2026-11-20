@@ -4,11 +4,11 @@ p3-stack is [pstack](https://github.com/cursor/plugins/tree/main/pstack) for T3 
 
 pstack is poteto's answer to AI slop code. It turns an agent into an engineering team: one mode skill that routes to playbooks, principles that ground every decision, and verification strict enough that you can parallelize with confidence.
 
-p3-stack ships pstack's skills unchanged, plus one adapter, [`docs/harness/t3-code.md`](docs/harness/t3-code.md), that maps every Cursor name in them to T3 Code's tools. This is the same shape pstack uses for Claude Code. Following pstack is a version bump, not a rewrite.
+p3-stack ships pstack's skills unchanged, plus one adapter, [`docs/harness/t3-code.md`](docs/harness/t3-code.md), that maps every Cursor name in them to T3 Code's tools. It also ships `deslop`, the one skill from Cursor's `cursor-team-kit` plugin that pstack runs before every commit. This is the same shape pstack uses for Claude Code. Following pstack is a version bump, not a rewrite.
 
 This repo, [rohan-prasad/pstack-t3](https://github.com/rohan-prasad/pstack-t3), is a fork of [rasmushjulskov/p3-stack](https://github.com/rasmushjulskov/p3-stack). [What this fork changes](#what-this-fork-changes) lists the differences.
 
-- **Delegation.** `delegate_task` replaces Cursor's Task tool, with per-role providers and models resolved from `orchestrator_capabilities`. Cross-model panels are native.
+- **Delegation.** `delegate_task` replaces Cursor's Task tool, with per-role providers and models resolved from `orchestrator_capabilities`. Every poteto-mode subagent goes through it, as every one goes through Task in Cursor. Cross-model panels are native.
 - **Worktrees.** `isolation: "worktree"` gives every worker, verifier, and PR owner its own checkout, and each still reports back to its parent.
 - **Watching.** `watch_pull_request` wakes the thread when checks finish, someone comments, or the branch conflicts. No polling loops.
 - **Scheduling.** `schedule_task` replaces `/loop` heartbeats and Cursor Automations, webhooks included.
@@ -29,7 +29,7 @@ After an install, restart the agent session in T3 Code or start a new thread. Th
 
 pstack has plain skill names such as `how`, `why`, and `tdd`. When a link with one of those names already points somewhere else, `install.sh` leaves it and says so. Pass `--force` to replace it, which you need once when you move from another p3-stack checkout to this one.
 
-`./install.sh --hooks` also adds one hook to Claude Code's settings. It brings poteto-mode back after a compaction, as [After a compaction](#after-a-compaction) explains. `./install.sh --remove-hooks` takes it out.
+`./install.sh --hooks` also adds two hooks to Claude Code's settings. One brings poteto-mode back after a compaction, as [After a compaction](#after-a-compaction) explains. The other keeps a poteto-mode thread's subagents on `delegate_task`, as [Subagents](#subagents) explains. `./install.sh --remove-hooks` takes both out. A machine that ran `--hooks` before gets the second hook when it runs `--hooks` again.
 
 ## Get started
 
@@ -67,6 +67,12 @@ The adapter tells a thread to read the skill again. That instruction is part of 
 
 The hook needs Node. It goes in `~/.claude/settings.json`, so it covers every Claude session on the machine, in T3 Code and outside it. Codex, Grok, and Pi threads have no such hook and rely on the adapter's instruction.
 
+## Subagents
+
+pstack runs every subagent in the background, on the model its role names in `~/.agents/pstack-models.md`. In T3 Code that is a `delegate_task` child. T3 Code also tells a Claude thread to use Claude Code's own `Agent` tool for a foreground child on its own model. In 4 of 9 poteto-mode threads audited on 20 Nov 2026, the Feature playbook's code-writing step took that path. The code then ran on the parent's model, in the foreground, with no pstack brief. Those four threads never read the spawning part or the model file. The three that read both spawned correctly.
+
+The adapter now maps a step that delegates in plain words, as Feature's does, to `delegate_task`, and the opening names each delegating step's model. `./install.sh --hooks` adds a second hook that makes this certain for Claude threads. Claude Code runs it before its own subagent tool. In a poteto-mode thread or a pstack delegate, it refuses the call and names `delegate_task`, the spawning part, and the model file. Elsewhere it does nothing, so T3 Code's own rule holds outside the mode. Codex, Grok, and Pi threads have no such hook and rely on the adapter.
+
 ## T3 Code's own rules
 
 T3 Code gives every thread rules for subagents, pull requests, browser previews, and waiting. The adapter maps each pstack step onto those rules instead of around them. A child's completion wakes its parent, so nothing polls. A PR wait is `watch_pull_request`. Browser proof runs in the thread's own background tab and closes it. A child never spawns unless its brief says it may.
@@ -82,7 +88,7 @@ pstack stays out of threads that did not ask for it. Claude Code and Cursor keep
 
 ## Token cost
 
-A thread reads the adapter before its playbook, so the adapter stays short. It holds about 1,750 words, down from 2,900. The rows that one kind of step needs are separate files that a thread reads only when it gets there: [spawning and models](docs/harness/t3-code/spawning.md), [proof](docs/harness/t3-code/proof.md), [paths](docs/harness/t3-code/paths.md), [waking and scheduling](docs/harness/t3-code/waking.md), `setup-pstack`, and `make-bot-ui`. A task that spawns reads the spawning part too, about 2,200 words, so it reads more than before. A task that does not spawn reads less.
+A thread reads the adapter before its playbook, so the adapter stays short. It holds about 1,890 words, down from 2,900. The rows that one kind of step needs are separate files that a thread reads only when it gets there: [spawning and models](docs/harness/t3-code/spawning.md), [proof](docs/harness/t3-code/proof.md), [paths](docs/harness/t3-code/paths.md), [waking and scheduling](docs/harness/t3-code/waking.md), `setup-pstack`, and `make-bot-ui`. A task that spawns reads the spawning part too, about 2,250 words, so it reads more than before. A task that does not spawn reads less.
 
 A delegated child reads [`child.md`](docs/harness/t3-code/child.md), under 500 words, in place of the adapter. The generator fails when the adapter passes 1,900 words or `child.md` passes 500.
 
@@ -95,12 +101,12 @@ docs/harness/t3-code.md   the T3 adapter, the only hand-written skill text
 docs/harness/t3-code/     the child adapter, the adapter's read-on-demand parts, and T3 versions of pstack examples
 scripts/generate.mjs      builds skills/ from those
 scripts/adherence.mjs     measures how far real tasks followed the skill
-scripts/pstack-compaction-hook.mjs   the Claude Code hook that `install.sh --hooks` registers
+scripts/pstack-compaction-hook.mjs   the Claude Code hooks that `install.sh --hooks` registers
 scripts/transcript.mjs    how those two read a Claude transcript, with tests beside it
 skills/                   generated, committed so install needs no build step
 ```
 
-`scripts/generate.mjs` fetches pstack at the pinned commit and copies its skills, agent briefs, guide, and README into `skills/`. Every skill that uses a Cursor name gets one line under its heading pointing at the adapter, which lands at `skills/pstack-t3/SKILL.md`. The files in `docs/harness/t3-code/` land beside it in `skills/pstack-t3/`. Links between pstack files are rewritten to work in the installed tree, and links to files the tree leaves out point at the pinned commit on GitHub.
+`scripts/generate.mjs` fetches pstack at the pinned commit and copies its skills, agent briefs, guide, and README into `skills/`. It also copies `deslop` from `cursor-team-kit`, which sits beside pstack in the same repository, with that plugin's license. It adds `disable-model-invocation: true`, as pstack has on its own skills, and changes nothing else. Every skill that uses a Cursor name gets one line under its heading pointing at the adapter, which lands at `skills/pstack-t3/SKILL.md`. The files in `docs/harness/t3-code/` land beside it in `skills/pstack-t3/`. Links between pstack files are rewritten to work in the installed tree, and links to files the tree leaves out point at the pinned commit on GitHub.
 
 The generator fails when a skill uses a Cursor name the adapter has no row for, when a skill's name differs from its folder, or when a link breaks. So a new pstack feature cannot slip through unmapped.
 
@@ -128,6 +134,9 @@ A weekly workflow opens the bump as a PR with that list in its body, and opens a
 - `install.sh` no longer replaces a link that belongs to another skill pack, and it also links the skills where Claude Code reads them. The original linked only `~/.agents/skills/`, which Claude threads do not read.
 - A run opens with a visible message, and the mode holds for the thread, as described under [What a run looks like](#what-a-run-looks-like).
 - An optional Claude Code hook brings the skill text back after a compaction, as described under [After a compaction](#after-a-compaction).
+- Ships `deslop` from `cursor-team-kit` at the pinned commit. pstack runs it before every commit, and without it every PR skipped that pass.
+- Sends every poteto-mode subagent to `delegate_task` on its role's model, and an optional Claude Code hook refuses Claude's own subagent tool in the mode, as described under [Subagents](#subagents).
+- Keeps a playbook's Mandatory mark in the opening, sends PR-status requests to the Babysit playbook, and has a thread read Opening a PR before its first PR.
 - Every row follows T3 Code's own rules, and pstack no longer loads into Codex threads that did not ask for it, as described under [T3 Code's own rules](#t3-codes-own-rules).
 - The generator checks every T3 tool name against `t3-tools.json`. That check found eight names T3 Code had since renamed or merged.
 
